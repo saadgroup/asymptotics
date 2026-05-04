@@ -4,7 +4,7 @@ asymptotics.display.lindstedt_display
 Rich display for LindstedtHierarchy objects.
 """
 
-from sympy import latex
+from sympy import latex, Integer
 
 def _latex_eps(expr, eps_sym):
     """Render as LaTeX, substituting eps symbol -> varepsilon for display."""
@@ -12,6 +12,7 @@ def _latex_eps(expr, eps_sym):
     if eps_sym is not None and str(eps_sym) not in ('epsilon', 'varepsilon'):
         expr = expr.subs(eps_sym, _Sym('varepsilon'))
     return latex(expr)
+, Eq, Symbol, Integer
 
 
 def show_lindstedt(h, orders=None, mode: str = "auto") -> None:
@@ -87,9 +88,11 @@ def _show_jupyter(h, orders, display, Math, HTML):
             else (r"\varepsilon" if k == 1 else r"\varepsilon^{0}")
         )
 
+        sup = ['⁰','¹','²','³','⁴','⁵','⁶','⁷','⁸','⁹']
+        order_str = 'ε' + (sup[k] if k < len(sup) else str(k))
         display(HTML(
             f"<div style='margin-top:10px;font-weight:500;border-left:2px solid #7F77DD;"
-            f"padding-left:8px;'>Order {eps_label}</div>"
+            f"padding-left:8px;'>Order {order_str}</div>"
         ))
 
         # ODE

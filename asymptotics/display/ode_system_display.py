@@ -67,10 +67,12 @@ def _show_jupyter(h, display, Math, HTML):
             else (r"\varepsilon" if k == 1 else r"\varepsilon^{0}")
         )
 
+        sup = ['⁰','¹','²','³','⁴','⁵','⁶','⁷','⁸','⁹']
+        order_str = 'ε' + (sup[k] if k < len(sup) else str(k))
         display(HTML(
             f"<div style='margin-top:10px;font-weight:500;"
             f"border-left:2px solid #7F77DD;padding-left:8px;'>"
-            f"Order {eps_label}</div>"
+            f"Order {order_str}</div>"
         ))
 
         for var in h.variables:
