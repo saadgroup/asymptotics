@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asymptotics"
+version = "0.1.0"
+description = "A semi-automated perturbation theory toolkit built on SymPy"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Prof. Dr. Tony" }]
+requires-python = ">=3.10"
+keywords = ["perturbation theory", "asymptotic", "sympy", "mathematics", "ODE"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Education",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+]
+
+dependencies = [
+    "sympy>=1.12",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.4",
+]
+notebook = [
+    "jupyter>=1.0",
+    "ipython>=8.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourname/asymptotics"
+Repository = "https://github.com/yourname/asymptotics"
+Issues = "https://github.com/yourname/asymptotics/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["asymptotics*"]
+
+[tool.pytest.ini_options]
+testpaths = ["asymptotics/tests"]
+addopts   = "-v --tb=short"
+
+[tool.ruff]
+line-length    = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.coverage.run]
+source = ["asymptotics"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

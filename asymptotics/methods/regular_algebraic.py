@@ -1,0 +1,203 @@
+"""
+asymptotics.methods.regular_algebraic
+==================================
+Regular perturbation expansion for algebraic equations f(x, eps) = 0.
+
+Algorithm
+---------
+1. Build the ansatz  x = x0 + eps*x1 + eps^2*x2 + ...  (symbolic symbols x_0, x_1, ...)
+2. Substitute into f(x, eps)
+3. Taylor-expand in eps around eps=0 and collect coefficients of eps^k
+4. At each order k, solve the resulting polynomial equation for x_k
+   (previous x_j for j<k are already known and substituted in)
+5. Assemble the composite expansion
+
+Design principles
+-----------------
+- Every intermediate object is stored on the returned OrderHierarchy
+- Users can override x_k manually before subsequent orders are solved
+- root_hint on the problem selects which leading-order root to follow
+"""
+
+from __future__ import annotations
+from typing import Optional, List
+
+from sympy import (
+    Symbol, symbols, Eq, series, solve, Rational,
+    Add, Mul, Pow, Integer, sympify, pretty, latex,
+    expand, collect, factor, simplify, cancel
+)
+
+from asymptotics.core.problem    import AlgebraicEquation
+from asymptotics.core.hierarchy  import OrderHierarchy, OrderEntry
+from asymptotics.core.exceptions import (
+    NoSmallParameterError,
+    NoLeadingOrderSolutionError,
+    NoHigherOrderSolutionError,
+    OnlyComplexRootsError,
+)
+
+
+def _make_order_symbols(base_name: str, n: int) -> List[Symbol]:
+    """Create x_0, x_1, ..., x_n as distinct SymPy symbols."""
+    return [Symbol(f"{base_name}_{k}") for k in range(n + 1)]
+
+
+def expand_regular_algebraic(
+    problem: AlgebraicEquation,
+    order: int = 3,
+    root_index: int = 0,
+) -> OrderHierarchy:
+    """
+    Apply regular perturbation theory to an algebraic problem.
+
+    Parameters
+    ----------
+    problem : AlgebraicEquation
+    order : int
+        Highest power of eps to compute (inclusive).
+    root_index : int
+        Which root of the O(1) equation to follow (0 = first real root).
+        Overridden by problem.root_hint if set.
+
+    Returns
+    -------
+    OrderHierarchy
+        Fully populated hierarchy with all intermediate expressions.
+
+    Raises
+    ------
+    NoSmallParameterError
+        If the small parameter does not appear in the equation.
+    NoLeadingOrderSolutionError
+        If SymPy cannot solve the O(1) equation symbolically.
+    OnlyComplexRootsError
+        If the O(1) equation has only complex roots and no root_hint given.
+    NoHigherOrderSolutionError
+        If SymPy cannot solve the equation at some order k > 0.
+    """
+    eps = problem.small_param
+    x   = problem.dependent
+    f   = problem.equation
+    N   = order
+
+    # ------------------------------------------------------------------
+    # Check 1: small parameter must appear in the equation
+    # ------------------------------------------------------------------
+    if eps not in f.free_symbols:
+        raise NoSmallParameterError(eps, f)
+
+    h = OrderHierarchy()
+    h._method       = "Regular perturbation — algebraic"
+    h._problem_repr = f"f({x}, {eps}) = {f} = 0"
+    h.small_param   = eps
+
+    # ------------------------------------------------------------------
+    # Step 1: build order symbols  x_0, x_1, ..., x_N
+    # ------------------------------------------------------------------
+    x_syms = _make_order_symbols(str(x), N)
+
+    # ------------------------------------------------------------------
+    # Step 2: build ansatz as a polynomial in eps
+    # ------------------------------------------------------------------
+    x_ans = sum(eps**k * x_syms[k] for k in range(N + 1))
+
+    # ------------------------------------------------------------------
+    # Step 3: substitute ansatz into f and series-expand in eps
+    # ------------------------------------------------------------------
+    f_substituted = f.subs(x, x_ans)
+    f_series      = series(f_substituted, eps, 0, N + 1)
+
+    h.substituted_equation = f_substituted
+
+    # ------------------------------------------------------------------
+    # Step 4: collect coefficients by power of eps
+    # ------------------------------------------------------------------
+    coeff = {}
+    for k in range(N + 1):
+        coeff[k] = f_series.coeff(eps, k)
+    h.collected = coeff
+
+    # ------------------------------------------------------------------
+    # Step 5: solve order by order
+    # ------------------------------------------------------------------
+    known = {}
+
+    for k in range(N + 1):
+        eq_expr  = expand(coeff[k].subs(known))
+        equation = Eq(eq_expr, 0)
+
+        # Solve for x_k
+        try:
+            sols = solve(eq_expr, x_syms[k])
+        except NotImplementedError:
+            sols = []
+
+        # ------------------------------------------------------------------
+        # Check 2: no solution found
+        # ------------------------------------------------------------------
+        if not sols:
+            if k == 0:
+                raise NoLeadingOrderSolutionError(eq_expr, eps, x)
+            else:
+                raise NoHigherOrderSolutionError(k, x_syms[k], eq_expr, known)
+
+        # ------------------------------------------------------------------
+        # Root selection at leading order
+        # ------------------------------------------------------------------
+        if k == 0:
+            if problem.root_hint is not None:
+                hint      = sympify(problem.root_hint)
+                real_sols = [s for s in sols if s.is_real]
+                target    = real_sols if real_sols else sols
+                x_k_val   = min(target, key=lambda s: abs(complex(s - hint)))
+            else:
+                real_sols = [s for s in sols if s.is_real]
+
+                # Check 3: only complex roots with no hint
+                if not real_sols:
+                    raise OnlyComplexRootsError(eq_expr, sols)
+
+                try:
+                    real_sols = sorted(
+                        real_sols,
+                        key=lambda s: float(s.evalf()),
+                        reverse=True,
+                    )
+                except Exception:
+                    pass
+                x_k_val = real_sols[root_index % len(real_sols)]
+        else:
+            x_k_val = sols[0]
+
+        x_k_val = simplify(x_k_val)
+        known[x_syms[k]] = x_k_val
+
+        note = ""
+        if k == 0 and len(sols) > 1:
+            others         = [s for s in sols if s != x_k_val]
+            real_others    = [s for s in others if s.is_real]
+            complex_others = [s for s in others if not s.is_real]
+            parts = []
+            if real_others:
+                parts.append(f"other real roots: {real_others}")
+            if complex_others:
+                parts.append(f"complex roots omitted ({len(complex_others)} total)")
+            note = "; ".join(parts)
+
+        entry = OrderEntry(
+            order    = k,
+            equation = equation,
+            solution = x_k_val,
+            symbol   = x_syms[k],
+            note     = note,
+        )
+        h.entries.append(entry)
+
+    # ------------------------------------------------------------------
+    # Step 6: assemble composite expansion
+    # ------------------------------------------------------------------
+    composite_terms = [known[x_syms[k]] * eps**k for k in range(N + 1)]
+    h.composite = Add(*composite_terms)
+
+    return h
