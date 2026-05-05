@@ -21,6 +21,34 @@ class OrderEntry:
     symbol      : Symbol      # the symbol x_k used in the expansion
     note        : str = ""
 
+
+    def to_latex(self, environment='align', show_orders=False, filename=None):
+        """
+        Export this expansion as LaTeX source.
+
+        Parameters
+        ----------
+        environment : str
+            LaTeX math environment: 'align' (default), 'equation', or 'gather'.
+        show_orders : bool
+            If True, include each order u_k separately. Default False.
+        filename : str, optional
+            If given, write to this file. Otherwise print to console.
+
+        Returns
+        -------
+        str — the LaTeX source string
+
+        Examples
+        --------
+        >>> print(sol.to_latex())
+        >>> sol.to_latex(filename="result.tex")
+        >>> sol.to_latex(environment='equation', show_orders=True)
+        """
+        from asymptotics.latex_export import to_latex
+        return to_latex(self, environment=environment,
+                        show_orders=show_orders, filename=filename)
+
     def show(self):
         print(f"  O(eps^{self.order})")
         print(f"    equation : {pretty(self.equation)}")

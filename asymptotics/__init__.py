@@ -53,8 +53,7 @@ from asymptotics.methods.regular_ode     import ODEHierarchy
 from asymptotics.methods.lindstedt       import LindstedtHierarchy
 from asymptotics.methods.multiple_scales import MultScalesHierarchy
 from asymptotics.methods.boundary_layer  import BoundaryLayerHierarchy
-from asymptotics.core.ode_system import ODESystem
-from asymptotics.methods.regular_ode_system import ODESystemHierarchy
+
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
@@ -70,7 +69,10 @@ from asymptotics.core.conditions import ConditionError
 # ---------------------------------------------------------------------------
 # Numeric comparison — callable standalone or via sol.compare_numeric()
 # ---------------------------------------------------------------------------
+from asymptotics.core.ode_system import ODESystem
+from asymptotics.methods.regular_ode_system import ODESystemHierarchy
 from asymptotics.numerics import compare_numeric
+from asymptotics.latex_export import to_latex
 
 # ---------------------------------------------------------------------------
 # Convenience alias
@@ -88,8 +90,6 @@ __all__ = [
     "AlgebraicEquation",
     "AlgebraicSystem",
     "ODE",
-    "ODESystem",
-    "ODESystemHierarchy",
     # Hierarchy types
     "OrderHierarchy",
     "OrderEntry",
@@ -106,7 +106,10 @@ __all__ = [
     "OnlyComplexRootsError",
     "ConditionError",
     # Numeric comparison
+    "ODESystem",
+    "ODESystemHierarchy",
     "compare_numeric",
+    "to_latex",
     # Convenience
     "expand_regular",
 ]

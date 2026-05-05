@@ -65,6 +65,7 @@ pip install -e ".[dev,notebook]"
 
 Every result supports:
 - `sol.show()` — LaTeX display in Jupyter, plain text in terminal
+- `sol.to_latex()` — export results as LaTeX source for papers
 - `sol.compare_numeric(eps, problem=eq)` — numerical verification + plot
 - `sol[k].particular_solution` — symbolic result at order $k$
 
@@ -277,6 +278,37 @@ For coupled systems, results are dicts keyed by variable name:
 result['u_pert']['u']   # perturbation for u
 result['u_pert']['v']   # perturbation for v
 ```
+
+---
+
+## Export to LaTeX
+
+Every hierarchy can export its results as ready-to-paste LaTeX source:
+
+```python
+sol = eq.expand_lindstedt(order=2)
+
+# Print to console
+sol.to_latex()
+
+# Save to file
+sol.to_latex(filename="duffing.tex")
+
+# Include individual orders (u_0, u_1, u_2, ...) in addition to composite
+sol.to_latex(show_orders=True)
+
+# Choose math environment
+sol.to_latex(environment='equation')   # default: 'align'
+sol.to_latex(environment='gather')
+```
+
+Output for Lindstedt–Poincaré includes:
+- Frequency expansion $\omega(\varepsilon) = 1 + \frac{3}{8}\varepsilon + \cdots$
+- Composite solution in strained time $\tau$
+- Composite solution in physical time $t$
+
+Output for boundary layers includes outer, inner, and composite separately.
+The small parameter is always rendered as $\varepsilon$ regardless of what you named it.
 
 ---
 
