@@ -122,11 +122,45 @@ class ODESystemHierarchy:
         return to_latex(self, environment=environment,
                         show_orders=show_orders, filename=filename)
 
+
+    def eval(self, eps, at=None, params=None):
+        """
+        Evaluate the perturbation composite at given eps and independent variable values.
+
+        Parameters
+        ----------
+        eps : float or list of float
+            Value(s) of the small parameter.
+        at : array-like, optional
+            Values of the independent variable (for ODEs).
+            Not needed for algebraic equations.
+
+        Returns
+        -------
+        For ODEs:
+            ndarray if eps is scalar, dict {eps: ndarray} if eps is a list
+        For algebraic:
+            float if eps is scalar, ndarray if eps is a list
+
+        Examples
+        --------
+        >>> # ODE
+        >>> t_vals = np.linspace(0, 20, 300)
+        >>> u = sol.eval(eps=0.1, at=t_vals)           # ndarray
+        >>> u = sol.eval(eps=[0.1, 0.2], at=t_vals)    # dict {0.1: array, 0.2: array}
+        >>>
+        >>> # Algebraic
+        >>> x = sol.eval(eps=0.1)                       # float
+        >>> x = sol.eval(eps=[0.1, 0.2, 0.3])           # ndarray
+        """
+        from asymptotics.eval import eval_hierarchy
+        return eval_hierarchy(self, eps, at=at, params=params)
+
     def show(self, mode: str = "auto") -> None:
         from asymptotics.display.ode_system_display import show_ode_system
         show_ode_system(self, mode=mode)
 
-    def compare_numeric(self, eps, problem=None, **kwargs):
+    def compare_numeric(self, eps, params=None, **kwargs):
         """
         Compare this expansion against a numerical solution.
 
@@ -142,7 +176,8 @@ class ODESystemHierarchy:
         dict with 't', 'u_pert', 'u_numerical', 'fig'
         """
         from asymptotics.numerics import compare_numeric
-        return compare_numeric(self, eps, problem=problem, **kwargs)
+        problem = getattr(self, '_problem', None)
+        return compare_numeric(self, eps, params=params, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -314,4 +349,5 @@ def expand_regular_ode_system(problem, order: int = 2) -> ODESystemHierarchy:
             known[u_funcs[dep][k]] * eps**k for k in range(N + 1)
         ])
 
+    h._problem = problem
     return h

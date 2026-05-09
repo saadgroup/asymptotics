@@ -232,8 +232,30 @@ def _pick_solution(sol_list, unknowns, root_hint, dep_names, order):
         return dicts[0]
 
     # Filter to real solutions
+    # is_real returns True/False/None — None means symbolic params present
     def _is_real_solution(d):
-        return all(v.is_real for v in d.values())
+        vals = list(d.values())
+        # First try: all definitively real
+        if all(v.is_real is True for v in vals):
+            return True
+        # Second try: numerically test with param=1 substitution
+        if any(v.is_real is False for v in vals):
+            return False
+        # All are None — test numerically
+        try:
+            from sympy import Symbol
+            free = set()
+            for v in vals:
+                free |= v.free_symbols
+            free -= set(unknowns)
+            test_subs = {sym: 1 for sym in free}
+            for v in vals:
+                num = complex(v.subs(test_subs).evalf())
+                if abs(num.imag) > 1e-10 * (abs(num) + 1e-10):
+                    return False
+            return True
+        except Exception:
+            return True  # can't determine, assume real
 
     real_dicts = [d for d in dicts if _is_real_solution(d)]
     candidates = real_dicts if real_dicts else dicts

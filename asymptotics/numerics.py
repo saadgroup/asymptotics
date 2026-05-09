@@ -16,7 +16,7 @@ from sympy import Symbol, symbols, lambdify, solve, Integer, sympify
 # Dispatcher — called by sol.compare_numeric()
 # ---------------------------------------------------------------------------
 
-def compare_numeric(hierarchy, eps, **kwargs):
+def compare_numeric(hierarchy, eps, params=None, **kwargs):
     """
     Compare a perturbation expansion against a numerical solution.
 
@@ -25,12 +25,54 @@ def compare_numeric(hierarchy, eps, **kwargs):
     hierarchy : any perturbation hierarchy object
     eps : float
         Value of the small parameter to use.
-    **kwargs : passed to the appropriate solver
+    **kwargs
+        plot_range : [a, b] — domain for plotting (ODE only)
+        n_points   : int — number of plot points (default 300)
 
     Returns
     -------
     dict with keys depending on problem type (see individual solvers)
     """
+    # Handle legacy/alias kwargs gracefully
+    for alias in ('t_range', 'x_range'):
+        if alias in kwargs:
+            import warnings
+            warnings.warn(
+                f"'{alias}' is not a valid parameter — use 'plot_range' instead.",
+                UserWarning, stacklevel=2
+            )
+            kwargs.setdefault('plot_range', kwargs.pop(alias))
+            break
+
+    # Normalize eps: scalar -> single-element list, list -> list
+    if not hasattr(eps, '__iter__'):
+        eps_list = [float(eps)]
+    else:
+        eps_list = [float(e) for e in eps]
+
+    # Check for symbolic parameters
+    from sympy import Symbol
+    problem  = getattr(hierarchy, '_problem', None)
+    prob_params = getattr(problem, 'params', set()) if problem else set()
+    if prob_params:
+        if params is None:
+            param_str = ', '.join(f"'{p}': value" for p in sorted(prob_params))
+            raise ValueError(
+                f"\n\n  Equation has symbolic parameters: {set(sorted(prob_params))}\n"
+                f"  Provide values:\n"
+                f"    sol.compare_numeric(eps=.., params={{{param_str}}})\n"
+            )
+        missing = prob_params - set(params.keys())
+        if missing:
+            param_str = ', '.join(f"'{p}': value" for p in sorted(prob_params))
+            raise ValueError(
+                f"\n\n  Missing parameter values: {set(sorted(missing))}\n"
+                f"  Required: {set(sorted(prob_params))}\n"
+                f"  Provide all values:\n"
+                f"    sol.compare_numeric(eps=.., params={{{param_str}}})\n"
+            )
+    param_subs = {Symbol(k): v for k, v in params.items()} if params else {}
+    kwargs['param_subs'] = param_subs
     from asymptotics.methods.regular_ode      import ODEHierarchy
     from asymptotics.methods.lindstedt        import LindstedtHierarchy
     from asymptotics.methods.multiple_scales  import MultScalesHierarchy
@@ -38,16 +80,19 @@ def compare_numeric(hierarchy, eps, **kwargs):
     from asymptotics.core.hierarchy           import OrderHierarchy   # algebraic
 
     from asymptotics.methods.regular_ode_system import ODESystemHierarchy
-    if isinstance(hierarchy, ODESystemHierarchy):
-        return _compare_ode_system(hierarchy, eps, **kwargs)
+    from asymptotics.core.system_hierarchy import SystemHierarchy
+    if isinstance(hierarchy, SystemHierarchy):
+        return _compare_algebraic_system(hierarchy, eps_list, **kwargs)
+    elif isinstance(hierarchy, ODESystemHierarchy):
+        return _compare_ode_system(hierarchy, eps_list, **kwargs)
     elif isinstance(hierarchy, BoundaryLayerHierarchy):
-        return _compare_boundary_layer(hierarchy, eps, **kwargs)
+        return _compare_boundary_layer(hierarchy, eps_list, **kwargs)
     elif isinstance(hierarchy, ODEHierarchy):
-        return _compare_ode(hierarchy, eps, **kwargs)
+        return _compare_ode(hierarchy, eps_list, **kwargs)
     elif isinstance(hierarchy, (LindstedtHierarchy, MultScalesHierarchy)):
-        return _compare_ode_oscillator(hierarchy, eps, **kwargs)
+        return _compare_ode_oscillator(hierarchy, eps_list, **kwargs)
     elif isinstance(hierarchy, OrderHierarchy):
-        return _compare_algebraic(hierarchy, eps, **kwargs)
+        return _compare_algebraic(hierarchy, eps_list, **kwargs)
     else:
         raise TypeError(
             f"\n\n  compare_numeric does not support {type(hierarchy).__name__}.\n"
@@ -58,114 +103,119 @@ def compare_numeric(hierarchy, eps, **kwargs):
 # Algebraic — no plot, just return values
 # ---------------------------------------------------------------------------
 
-def _compare_algebraic(h, eps_val, **kwargs):
+def _compare_algebraic(h, eps_list, n_points=100, problem=None, **kwargs):
     """
     Compare algebraic perturbation expansion against scipy root-finder.
-
-    Returns
-    -------
-    dict:
-        eps         : float
-        perturbation: float  — composite expansion evaluated at eps
-        numerical   : float  — exact root from fsolve
-        error       : float  — |perturbation - numerical|
+    eps_list is used as the x-axis: plot x(eps) vs exact root over eps_list.
     """
+    import matplotlib.pyplot as plt
     from scipy.optimize import fsolve
 
-    eps_sym  = h.small_param
-    dep_sym  = h.entries[0].symbol
+    eps_sym = h.small_param
 
-    # Evaluate composite at eps_val
-    pert_val = float(h.composite.subs(eps_sym, eps_val))
+    if not hasattr(h, '_original_equation') or not hasattr(h, '_dependent_sym'):
+        raise ValueError(
+            "\n\n  compare_numeric for algebraic equations requires the updated "
+            "regular_algebraic.py.\n"
+        )
 
-    # Reconstruct the original equation and solve numerically
-    # h stores equation? Not directly — use pert_val as initial guess
-    # We need the original equation. Check if stored on hierarchy.
-    if hasattr(h, '_original_equation'):
-        f_orig   = h._original_equation
-        x_sym    = dep_sym
-        f_fn     = lambdify(x_sym, f_orig.subs(eps_sym, eps_val), 'numpy')
-        num_val  = float(fsolve(f_fn, pert_val, full_output=False)[0])
-    else:
-        num_val = float('nan')
+    f_orig   = h._original_equation
+    x_sym    = h._dependent_sym
+    dep_name = str(getattr(h, '_dependent_sym', 'x'))
 
-    error = abs(pert_val - num_val)
+    # Use eps_list as x-axis range
+    eps_vals = np.array(sorted(eps_list))
+
+    pert_vals = np.array([
+        float(h.composite.subs(eps_sym, ev).subs(kwargs.get('param_subs', {}))) for ev in eps_vals
+    ])
+
+    num_vals = []
+    for j, ev in enumerate(eps_vals):
+        f_fn = lambdify(x_sym, f_orig.subs(eps_sym, ev).subs(kwargs.get('param_subs', {})), 'numpy')
+        try:
+            num_vals.append(float(fsolve(f_fn, pert_vals[j])[0]))
+        except Exception:
+            num_vals.append(float('nan'))
+    num_vals = np.array(num_vals)
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(eps_vals, num_vals,  'k-',   lw=2,   label='Exact (fsolve)', alpha=0.9)
+    ax.plot(eps_vals, pert_vals, 'ro--', lw=1.5, ms=5, markevery=max(1, len(eps_vals)//10),
+            label=f'Perturbation (order {len(h)-1})')
+    ax.set_xlabel('ε')
+    ax.set_ylabel(dep_name)
+    ax.set_title(f'Algebraic perturbation  —  order {len(h)-1}')
+    ax.legend()
+    plt.tight_layout()
 
     return {
-        'eps'          : eps_val,
-        'perturbation' : pert_val,
-        'numerical'    : num_val,
-        'error'        : error,
+        'eps'         : eps_vals,
+        'perturbation': pert_vals,
+        'numerical'   : num_vals,
+        'fig'         : fig,
     }
 
-
-# ---------------------------------------------------------------------------
-# ODE IVP / BVP (regular perturbation)
-# ---------------------------------------------------------------------------
-
-def _compare_ode(h, eps_val, plot_range=None, n_points=300, problem=None, **kwargs):
+def _compare_ode(h, eps_list, plot_range=None, n_points=300, problem=None, **kwargs):
+    problem = problem or getattr(h, "_problem", None)
     """
     Compare ODE perturbation expansion against scipy numerical solution.
-
-    Returns
-    -------
-    dict:
-        t           : ndarray
-        u_pert      : ndarray  — composite expansion
-        u_numerical : ndarray  — from solve_ivp or solve_bvp
-        fig         : matplotlib Figure
+    eps_list : list of floats — one curve pair per eps value.
     """
     import matplotlib.pyplot as plt
 
     eps_sym = h.small_param
     t_sym   = h.independent
 
-    # Evaluate composite at eps_val
-    comp_expr = h.composite.subs(eps_sym, eps_val)
-    comp_fn   = lambdify(t_sym, comp_expr, 'numpy')
-
-    # Get t_range from hierarchy or problem
     if plot_range is None:
         plot_range = _infer_range(h, problem)
 
-    t_vals  = np.linspace(plot_range[0], plot_range[1], n_points)
-    u_pert  = np.real(np.array(
-        [complex(comp_fn(ti)) for ti in t_vals]
-    ))
+    t_vals = np.linspace(plot_range[0], plot_range[1], n_points)
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
-    # Build numerical solution
-    if h._problem_type == 'ivp':
-        u_num = _solve_ode_ivp(h, eps_val, plot_range, t_vals, problem)
-    else:
-        u_num = _solve_ode_bvp(h, eps_val, plot_range, t_vals, problem)
+    fig, ax    = plt.subplots(figsize=(10, 4))
+    u_pert_all = {}
+    u_num_all  = {}
 
-    # Plot
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(t_vals, u_num,  'k-',  lw=2,   label='Numerical (exact)', alpha=0.9)
-    ax.plot(t_vals, u_pert, 'ro--', lw=1.5, ms=5, markevery=30,
-            label=f'Perturbation  O(ε{len(h)-1})', alpha=0.9)
+    for i, eps_val in enumerate(eps_list):
+        color   = colors[i % len(colors)]
+        comp_fn = lambdify(t_sym, h.composite.subs(eps_sym, eps_val).subs(kwargs.get("param_subs", {})), "numpy")
+        u_pert  = np.real(np.array([complex(comp_fn(ti)) for ti in t_vals]))
+
+        if h._problem_type == 'ivp':
+            u_num = _solve_ode_ivp(h, eps_val, plot_range, t_vals, problem, param_subs=kwargs.get("param_subs", {}))
+        else:
+            u_num = _solve_ode_bvp(h, eps_val, plot_range, t_vals, problem, param_subs=kwargs.get("param_subs", {}))
+
+        ax.plot(t_vals, u_num,  '-',  color=color, lw=2,   alpha=0.85,
+                label=f'Exact  ε={eps_val}')
+        ax.plot(t_vals, u_pert, '--', color=color, lw=1.5, ms=4,
+                marker='o', markevery=30, alpha=0.9,
+                label=f'Perturbation  ε={eps_val}')
+
+        u_pert_all[eps_val] = u_pert
+        u_num_all[eps_val]  = u_num
+
     ax.set_xlabel(str(t_sym))
-    ax.set_ylabel(str(h.entries[0].symbol).split('(')[0].rstrip('_0'))
-    ax.set_title(
-        f'{h._method}  —  ε = {eps_val}'
-    )
-    ax.legend()
+    ax.set_title(f'{h._method}  —  order {len(h)-1}')
+    ncol = 2 if len(eps_list) > 1 else 1
+    ax.legend(fontsize=8, ncol=ncol)
     plt.tight_layout()
 
     return {
         't'           : t_vals,
-        'u_pert'      : u_pert,
-        'u_numerical' : u_num,
+        'u_pert'      : u_pert_all,
+        'u_numerical' : u_num_all,
         'fig'         : fig,
     }
 
 
-def _solve_ode_ivp(h, eps_val, plot_range, t_vals, problem):
+def _solve_ode_ivp(h, eps_val, plot_range, t_vals, problem, param_subs=None):
     """Solve IVP numerically using solve_ivp."""
     from scipy.integrate import solve_ivp as _solve_ivp
 
-    rhs_fn = _build_ode_rhs(h, eps_val, problem)
-    ics    = _get_ics(h, problem)
+    rhs_fn = _build_ode_rhs(h, eps_val, problem, param_subs=param_subs)
+    ics    = _get_ics(h, problem, param_subs=param_subs)
 
     sol = _solve_ivp(
         rhs_fn, plot_range, ics,
@@ -177,11 +227,11 @@ def _solve_ode_ivp(h, eps_val, plot_range, t_vals, problem):
     return sol.sol(t_vals)[0]
 
 
-def _solve_ode_bvp(h, eps_val, plot_range, t_vals, problem):
+def _solve_ode_bvp(h, eps_val, plot_range, t_vals, problem, param_subs=None):
     """Solve BVP numerically using solve_bvp."""
     from scipy.integrate import solve_bvp as _solve_bvp
 
-    rhs_fn, bc_fn = _build_bvp_rhs_bc(h, eps_val, problem, plot_range)
+    rhs_fn, bc_fn = _build_bvp_rhs_bc(h, eps_val, problem, plot_range, param_subs=param_subs)
 
     x_grid = np.linspace(plot_range[0], plot_range[1], 50)
     y0     = np.zeros((2, len(x_grid)))
@@ -198,60 +248,65 @@ def _solve_ode_bvp(h, eps_val, plot_range, t_vals, problem):
 # Oscillator methods (Lindstedt, Multiple scales)
 # ---------------------------------------------------------------------------
 
-def _compare_ode_oscillator(h, eps_val, plot_range=None, n_points=500,
+def _compare_ode_oscillator(h, eps_list, plot_range=None, n_points=500,
                              problem=None, **kwargs):
-    """Compare oscillator expansion (Lindstedt or multiple scales)."""
+    """Compare oscillator expansion (Lindstedt or multiple scales).
+    eps_list : list of floats — one curve pair per eps value.
+    """
     import matplotlib.pyplot as plt
     from scipy.integrate import solve_ivp as _solve_ivp
 
     eps_sym = h.small_param
     t_sym   = h.independent
 
-    # Build perturbation solution
-    if hasattr(h, 'composite_t'):
-        # Lindstedt or multiple scales — composite_t is in terms of t
-        comp_expr = h.composite_t.subs(eps_sym, eps_val)
-    else:
-        comp_expr = h.composite.subs(eps_sym, eps_val)
-
-    comp_fn  = lambdify(t_sym, comp_expr, 'numpy')
-
     if plot_range is None:
         plot_range = _infer_range(h, problem)
 
-    t_vals  = np.linspace(plot_range[0], plot_range[1], n_points)
+    t_vals = np.linspace(plot_range[0], plot_range[1], n_points)
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
-    try:
-        u_pert = np.real(np.array(
-            [complex(comp_fn(ti)) for ti in t_vals]
-        ))
-    except Exception:
-        u_pert = comp_fn(t_vals)
+    fig, ax    = plt.subplots(figsize=(10, 4))
+    u_pert_all = {}
+    u_num_all  = {}
 
-    # Numerical
-    rhs_fn = _build_ode_rhs(h, eps_val, problem)
-    ics    = _get_ics(h, problem)
+    for i, eps_val in enumerate(eps_list):
+        color = colors[i % len(colors)]
 
-    sol = _solve_ivp(
-        rhs_fn, plot_range, ics,
-        dense_output=True, rtol=1e-10, atol=1e-12
-    )
-    u_num = sol.sol(t_vals)[0]
+        if hasattr(h, 'composite_t'):
+            comp_expr = h.composite_t.subs(eps_sym, eps_val)
+        else:
+            comp_expr = h.composite.subs(eps_sym, eps_val)
 
-    # Plot
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(t_vals, u_num,  'k-',  lw=2,   label='Numerical (exact)', alpha=0.9)
-    ax.plot(t_vals, u_pert, 'ro--', lw=1.5, ms=5, markevery=30,
-            label=f'{h._method}  O(ε{len(h)-1})', alpha=0.9)
+        comp_fn = lambdify(t_sym, comp_expr, 'numpy')
+        try:
+            u_pert = np.real(np.array([complex(comp_fn(ti)) for ti in t_vals]))
+        except Exception:
+            u_pert = comp_fn(t_vals)
+
+        rhs_fn = _build_ode_rhs(h, eps_val, problem)
+        ics    = _get_ics(h, problem)
+        sol    = _solve_ivp(rhs_fn, plot_range, ics,
+                            dense_output=True, rtol=1e-10, atol=1e-12)
+        u_num  = sol.sol(t_vals)[0]
+
+        ax.plot(t_vals, u_num,  '-',  color=color, lw=2,   alpha=0.85,
+                label=f'Exact  ε={eps_val}')
+        ax.plot(t_vals, u_pert, '--', color=color, lw=1.5, ms=4,
+                marker='o', markevery=30, alpha=0.9,
+                label=f'Perturbation  ε={eps_val}')
+
+        u_pert_all[eps_val] = u_pert
+        u_num_all[eps_val]  = u_num
+
     ax.set_xlabel(str(t_sym))
-    ax.set_title(f'{h._method}  —  ε = {eps_val}')
-    ax.legend()
+    ax.set_title(f'{h._method}  —  order {len(h)-1}')
+    ax.legend(fontsize=8, ncol=2 if len(eps_list) > 1 else 1)
     plt.tight_layout()
 
     return {
         't'           : t_vals,
-        'u_pert'      : u_pert,
-        'u_numerical' : u_num,
+        'u_pert'      : u_pert_all,
+        'u_numerical' : u_num_all,
         'fig'         : fig,
     }
 
@@ -260,111 +315,88 @@ def _compare_ode_oscillator(h, eps_val, plot_range=None, n_points=500,
 # Boundary layer
 # ---------------------------------------------------------------------------
 
-def _compare_boundary_layer(h, eps_val, n_points=400, problem=None, **kwargs):
+def _compare_boundary_layer(h, eps_list, n_points=400, problem=None, **kwargs):
     """
     Compare boundary layer expansion against solve_bvp.
-    Shows outer, inner, AND composite.
+    Shows outer, inner, AND composite. One subplot per eps value.
     """
     import matplotlib.pyplot as plt
 
-    eps_sym = h.small_param
-    x_sym   = h.independent
-
-    # Evaluate all three pieces
-    def _eval(expr):
-        sub  = expr.subs(eps_sym, eps_val)
-        fn   = lambdify(x_sym, sub, 'numpy')
-        vals = fn(x_vals)
-        # broadcast scalar
-        return np.real(np.broadcast_to(
-            np.atleast_1d(np.array(vals, dtype=complex)),
-            x_vals.shape
-        ))
-
-    x_vals = np.linspace(0, 1, n_points)
-
-    u_outer = _eval(h.outer)
-    u_inner = _eval(h.inner_xi)
-    u_comp  = _eval(h.composite)
-
-    # Numerical — robust BVP with layer-aware grid
+    eps_sym    = h.small_param
+    x_sym      = h.independent
     layer_side = 'left' if '0' in h.layer_location else 'right'
-    rhs_fn, bc_fn = _build_bvp_rhs_bc(h, eps_val, problem, [0, 1])
+    x_vals     = np.linspace(0, 1, n_points)
 
-    x_num = _layer_aware_grid(eps_val, layer_side, n_points)
-    y0    = np.zeros((2, len(x_num)))
-    y0[0] = np.real(_eval_at(h.composite, eps_sym, eps_val, x_sym, x_num))
+    n_eps = len(eps_list)
+    fig, axes = plt.subplots(1, n_eps, figsize=(6*n_eps, 4), squeeze=False)
 
-    from scipy.integrate import solve_bvp as _solve_bvp
-    sol = _solve_bvp(rhs_fn, bc_fn, x_num, y0, tol=1e-6, max_nodes=10000)
-    if not sol.success:
-        # Fallback: uniform grid with composite as init
-        x_num = np.linspace(0, 1, 200)
-        y0    = np.zeros((2, 200))
+    results = {ev: {} for ev in eps_list}
+
+    for i, eps_val in enumerate(eps_list):
+        ax = axes[0][i]
+
+        def _eval(expr):
+            sub = expr.subs(eps_sym, eps_val)
+            fn  = lambdify(x_sym, sub, 'numpy')
+            vals = fn(x_vals)
+            return np.real(np.broadcast_to(
+                np.atleast_1d(np.array(vals, dtype=complex)), x_vals.shape
+            ))
+
+        u_outer = _eval(h.outer)
+        u_inner = _eval(h.inner_xi)
+        u_comp  = _eval(h.composite)
+
+        rhs_fn, bc_fn = _build_bvp_rhs_bc(h, eps_val, problem, [0, 1])
+        x_num = _layer_aware_grid(eps_val, layer_side, n_points)
+        y0    = np.zeros((2, len(x_num)))
         y0[0] = np.real(_eval_at(h.composite, eps_sym, eps_val, x_sym, x_num))
-        sol   = _solve_bvp(rhs_fn, bc_fn, x_num, y0, tol=1e-5, max_nodes=10000)
 
-    u_num = sol.sol(x_vals)[0]
+        from scipy.integrate import solve_bvp as _solve_bvp
+        sol = _solve_bvp(rhs_fn, bc_fn, x_num, y0, tol=1e-6, max_nodes=10000)
+        if not sol.success:
+            x_num = np.linspace(0, 1, 200)
+            y0    = np.zeros((2, 200))
+            y0[0] = np.real(_eval_at(h.composite, eps_sym, eps_val, x_sym, x_num))
+            sol   = _solve_bvp(rhs_fn, bc_fn, x_num, y0, tol=1e-5, max_nodes=10000)
+        u_num = sol.sol(x_vals)[0]
 
-    # Plot
-    fig, ax = plt.subplots(figsize=(11, 5))
+        ax.plot(x_vals, u_num,   'k-',   lw=2,   label='Exact', alpha=0.9)
+        ax.plot(x_vals, u_comp,  'ro--', lw=1.5, ms=4, markevery=25, label='Composite')
+        ax.plot(x_vals, u_outer, 'b:',   lw=2,   label='Outer')
+        ax.plot(x_vals, u_inner, 'g-.',  lw=1.8, label='Inner', alpha=0.85)
 
-    ax.plot(x_vals, u_num,   'k-',   lw=2,   label='Numerical (exact)', alpha=0.9)
-    ax.plot(x_vals, u_comp,  'ro--', lw=1.5, ms=5, markevery=25, label='Composite')
-    ax.plot(x_vals, u_outer, 'b:',   lw=2,   label='Outer')
-    ax.plot(x_vals, u_inner, 'g-.',  lw=1.8, label='Inner', alpha=0.85)
+        thickness = 5 * eps_val
+        if layer_side == 'left':
+            ax.axvspan(0, min(thickness, 0.3), alpha=0.07, color='blue')
+        else:
+            ax.axvspan(max(1-thickness, 0.7), 1, alpha=0.07, color='blue')
 
-    # Shade the layer
-    thickness = 5 * eps_val
-    if layer_side == 'left':
-        ax.axvspan(0, min(thickness, 0.3), alpha=0.07, color='blue',
-                   label=f'Layer region (5ε)')
-    else:
-        ax.axvspan(max(1 - thickness, 0.7), 1, alpha=0.07, color='blue',
-                   label=f'Layer region (5ε)')
+        ax.set_title(f'ε = {eps_val}  (layer: {h.layer_location})')
+        ax.set_xlabel(str(x_sym))
+        ax.legend(fontsize=8)
 
-    ax.set_xlabel(str(x_sym))
-    ax.set_title(
-        f'Matched Asymptotic Expansions  —  ε = {eps_val}'
-        f'\n(layer at {h.layer_location})'
-    )
-    ax.legend(fontsize=9)
+        results[eps_val] = {
+            'u_outer': u_outer, 'u_inner': u_inner,
+            'u_composite': u_comp, 'u_numerical': u_num,
+        }
+
+    plt.suptitle(f'Matched Asymptotic Expansions', fontsize=11, y=1.02)
     plt.tight_layout()
 
     return {
-        'x'           : x_vals,
-        'u_outer'     : u_outer,
-        'u_inner'     : u_inner,
-        'u_composite' : u_comp,
-        'u_numerical' : u_num,
-        'fig'         : fig,
+        'x'      : x_vals,
+        'results': results,
+        'fig'    : fig,
     }
 
-
-# ---------------------------------------------------------------------------
-# ODE System
-# ---------------------------------------------------------------------------
-
-def _compare_ode_system(h, eps_val, plot_range=None, n_points=300,
+def _compare_ode_system(h, eps_list, plot_range=None, n_points=300,
                         problem=None, **kwargs):
     """
-    Compare coupled ODE system expansion against scipy numerical solution.
-
-    Returns
-    -------
-    dict:
-        t           : ndarray
-        u_pert      : dict {var: ndarray}  — composite for each variable
-        u_numerical : dict {var: ndarray}  — numerical solution per variable
-        fig         : matplotlib Figure
+    Compare coupled ODE system expansion against scipy.
+    eps_list : list of floats — one curve pair per eps value per variable.
     """
     import matplotlib.pyplot as plt
-
-    if problem is None:
-        raise ValueError(
-            "\n\n  compare_numeric needs the original problem object.\n"
-            "  Call: sol.compare_numeric(eps=0.1, problem=sys)\n"
-        )
 
     eps_sym   = h.small_param
     t_sym     = h.independent
@@ -374,59 +406,55 @@ def _compare_ode_system(h, eps_val, plot_range=None, n_points=300,
         plot_range = _infer_range(h, problem)
 
     t_vals = np.linspace(plot_range[0], plot_range[1], n_points)
-
-    # Perturbation composites
-    u_pert = {}
-    for var in variables:
-        fn = lambdify(t_sym, h[var].composite.subs(eps_sym, eps_val), 'numpy')
-        try:
-            vals = np.array([complex(fn(ti)) for ti in t_vals])
-            u_pert[var] = np.real(vals)
-        except Exception:
-            u_pert[var] = np.array([float(fn(ti)) for ti in t_vals])
-
-    # Numerical solution — build system RHS
-    rhs_fn = _build_system_rhs(problem, eps_val)
-    ics    = _get_system_ics(problem)
-
-    from scipy.integrate import solve_ivp as _solve_ivp
-    sol = _solve_ivp(
-        rhs_fn, plot_range, ics,
-        dense_output=True, rtol=1e-10, atol=1e-12
-    )
-    if not sol.success:
-        raise RuntimeError(f"solve_ivp failed: {sol.message}")
-
-    u_numerical = {
-        var: sol.sol(t_vals)[i]
-        for i, var in enumerate(variables)
-    }
-
-    # Plot — one panel per variable
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
     n_vars = len(variables)
-    fig, axes = plt.subplots(1, n_vars, figsize=(5*n_vars, 4))
-    if n_vars == 1:
-        axes = [axes]
 
-    for ax, var in zip(axes, variables):
-        ax.plot(t_vals, u_numerical[var], 'k-',  lw=2,
-                label='Numerical (exact)', alpha=0.9)
-        ax.plot(t_vals, u_pert[var],      'ro--', lw=1.5, ms=5, markevery=25,
-                label=f'Perturbation  O(ε{len(h[var])-1})', alpha=0.9)
-        ax.set_title(f'{var}(t)  —  ε = {eps_val}')
-        ax.set_xlabel(str(t_sym))
-        ax.legend()
+    fig, axes = plt.subplots(1, n_vars, figsize=(5*n_vars, 4), squeeze=False)
 
-    plt.suptitle(h._method, fontsize=11, y=1.01)
+    u_pert_all = {ev: {} for ev in eps_list}
+    u_num_all  = {ev: {} for ev in eps_list}
+
+    for i, eps_val in enumerate(eps_list):
+        color  = colors[i % len(colors)]
+        rhs_fn = _build_system_rhs(problem, eps_val)
+        ics    = _get_system_ics(problem)
+
+        from scipy.integrate import solve_ivp as _solve_ivp
+        sol = _solve_ivp(rhs_fn, plot_range, ics,
+                         dense_output=True, rtol=1e-10, atol=1e-12)
+
+        for j, var in enumerate(variables):
+            ax = axes[0][j]
+            fn = lambdify(t_sym, h[var].composite.subs(eps_sym, eps_val), 'numpy')
+            try:
+                u_pert = np.real(np.array([complex(fn(ti)) for ti in t_vals]))
+            except Exception:
+                u_pert = np.array([float(fn(ti)) for ti in t_vals])
+            u_num = sol.sol(t_vals)[j]
+
+            ax.plot(t_vals, u_num,  '-',  color=color, lw=2,   alpha=0.85,
+                    label=f'Exact  ε={eps_val}' if j==0 else f'ε={eps_val}')
+            ax.plot(t_vals, u_pert, '--', color=color, lw=1.5, ms=4,
+                    marker='o', markevery=25, alpha=0.9,
+                    label=f'Pert.  ε={eps_val}' if j==0 else None)
+
+            u_pert_all[eps_val][var] = u_pert
+            u_num_all[eps_val][var]  = u_num
+
+        for j, var in enumerate(variables):
+            axes[0][j].set_title(f'{var}(t)  —  order {len(h[var])-1}')
+            axes[0][j].set_xlabel(str(t_sym))
+            axes[0][j].legend(fontsize=7)
+
+    plt.suptitle(h._method, fontsize=11, y=1.02)
     plt.tight_layout()
 
     return {
         't'           : t_vals,
-        'u_pert'      : u_pert,
-        'u_numerical' : u_numerical,
+        'u_pert'      : u_pert_all,
+        'u_numerical' : u_num_all,
         'fig'         : fig,
     }
-
 
 def _build_system_rhs(problem, eps_val):
     """Build scipy RHS for the full ODE system."""
@@ -505,10 +533,55 @@ def _get_system_ics(problem):
 
 
 # ---------------------------------------------------------------------------
+# Algebraic System
+# ---------------------------------------------------------------------------
+
+def _compare_algebraic_system(h, eps_list, problem=None, **kwargs):
+    """
+    Compare coupled algebraic system expansion against scipy root-finder.
+    Plots each variable vs exact root over eps range.
+    """
+    import matplotlib.pyplot as plt
+    from scipy.optimize import fsolve
+
+    eps_sym   = h.small_param
+    variables = list(h.hierarchies.keys())
+    n_vars    = len(variables)
+
+    eps_vals = np.array(sorted(eps_list))
+
+    fig, axes = plt.subplots(1, n_vars, figsize=(5*n_vars, 4), squeeze=False)
+
+    results = {}
+    for j, var in enumerate(variables):
+        vh = h.hierarchies[var]
+        pert_vals = np.array([
+            complex(vh.composite.subs(eps_sym, ev).subs(kwargs.get('param_subs', {})).evalf()).real for ev in eps_vals
+        ])
+
+        axes[0][j].plot(eps_vals, pert_vals, 'ro--', lw=1.5, ms=5,
+                        markevery=max(1, len(eps_vals)//10),
+                        label=f'Perturbation (order {len(vh)-1})')
+        axes[0][j].set_title(f'{var}(ε)')
+        axes[0][j].set_xlabel('ε')
+        axes[0][j].legend(fontsize=8)
+        results[var] = pert_vals
+
+    plt.suptitle('Algebraic system — regular perturbation', fontsize=11)
+    plt.tight_layout()
+
+    return {
+        'eps'    : eps_vals,
+        'results': results,
+        'fig'    : fig,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _build_ode_rhs(h, eps_val, problem):
+def _build_ode_rhs(h, eps_val, problem, param_subs=None):
     """
     Build a scipy-compatible RHS function from the problem's equation.
     Returns f(t, y) where y = [u, u'].
@@ -526,7 +599,8 @@ def _build_ode_rhs(h, eps_val, problem):
     du_sym   = problem._deriv_syms.get(1)
     d2u_sym  = problem._deriv_syms.get(2)
 
-    f_at_eps  = f_orig.subs(eps_sym, eps_val)
+    param_subs = param_subs or {}
+    f_at_eps  = f_orig.subs(eps_sym, eps_val).subs(param_subs)
     ode_order = problem.ode_order
 
     if ode_order == 1:
@@ -562,7 +636,7 @@ def _build_ode_rhs(h, eps_val, problem):
     return rhs
 
 
-def _build_bvp_rhs_bc(h, eps_val, problem, x_range):
+def _build_bvp_rhs_bc(h, eps_val, problem, x_range, param_subs=None):
     """Build RHS and BC functions for solve_bvp."""
     if problem is None:
         raise ValueError(
@@ -585,7 +659,10 @@ def _build_bvp_rhs_bc(h, eps_val, problem, x_range):
     bc_dict = {c.point: c.value for c in conds if c.deriv_order == 0}
     pts    = sorted(bc_dict.keys(), key=lambda p: float(p.evalf()))
     a, b   = float(pts[0].evalf()), float(pts[1].evalf())
-    va, vb = float(bc_dict[pts[0]]), float(bc_dict[pts[1]])
+    param_subs = param_subs or {}
+    va_raw, vb_raw = bc_dict[pts[0]], bc_dict[pts[1]]
+    va = float(va_raw.subs(param_subs) if hasattr(va_raw, "subs") else va_raw)
+    vb = float(vb_raw.subs(param_subs) if hasattr(vb_raw, "subs") else vb_raw)
 
     def bc_bvp(ya, yb):
         return [ya[0] - va, yb[0] - vb]
@@ -593,16 +670,30 @@ def _build_bvp_rhs_bc(h, eps_val, problem, x_range):
     return rhs_bvp, bc_bvp
 
 
-def _get_ics(h, problem):
-    """Extract initial conditions as a list [u0, u'0, ...]."""
+def _get_ics(h, problem, param_subs=None):
+    """Extract initial conditions as a list [u0, u'0, ...].
+    Substitutes symbolic parameter values if provided.
+    """
     if problem is None:
         raise ValueError(
             "\n\n  compare_numeric needs the original problem object.\n"
             "  Call: sol.compare_numeric(eps=0.1, problem=eq)\n"
         )
+    param_subs = param_subs or {}
     conds = sorted(problem.conditions, key=lambda c: c.deriv_order)
-    return [float(c.value) for c in conds if
-            float(c.point.evalf()) == float(min(c.point for c in conds).evalf())]
+    ics = []
+    for c in conds:
+        if float(c.point.evalf()) == float(min(c.point for c in conds).evalf()):
+            val = c.value.subs(param_subs) if hasattr(c.value, 'subs') else c.value
+            try:
+                ics.append(float(val))
+            except Exception:
+                raise ValueError(
+                    f"\n\n  Could not evaluate initial condition value: {c.value}\n"
+                    f"  After param substitution: {val}\n"
+                    f"  Provide values: sol.compare_numeric(eps=..., params={{...}})\n"
+                )
+    return ics
 
 
 def _infer_range(h, problem):

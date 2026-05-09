@@ -88,9 +88,11 @@ def expand_regular_algebraic(
         raise NoSmallParameterError(eps, f)
 
     h = OrderHierarchy()
-    h._method       = "Regular perturbation — algebraic"
-    h._problem_repr = f"f({x}, {eps}) = {f} = 0"
-    h.small_param   = eps
+    h._method            = "Regular perturbation — algebraic"
+    h._problem_repr      = f"f({x}, {eps}) = {f} = 0"
+    h.small_param        = eps
+    h._original_equation = f        # stored for compare_numeric
+    h._dependent_sym     = x
 
     # ------------------------------------------------------------------
     # Step 1: build order symbols  x_0, x_1, ..., x_N
@@ -152,9 +154,39 @@ def expand_regular_algebraic(
                 target    = real_sols if real_sols else sols
                 x_k_val   = min(target, key=lambda s: abs(complex(s - hint)))
             else:
-                real_sols = [s for s in sols if s.is_real]
+                # is_real returns True (real), False (complex), or None (unknown)
+                # None happens when symbolic parameters are present.
+                # Strategy: substitute a small positive test value for all
+                # free symbols (except eps) to numerically identify real roots.
 
-                # Check 3: only complex roots with no hint
+                from sympy import im, Abs
+
+                # First try: definitively real
+                real_sols = [s for s in sols if s.is_real is True]
+
+                # Second try: numerically identify real roots by test substitution
+                if not real_sols:
+                    free = set()
+                    for s in sols:
+                        free |= s.free_symbols
+                    free -= {eps}   # remove small param
+                    test_subs = {sym: 1 for sym in free}  # substitute 1 for all params
+
+                    def _is_numerically_real(expr):
+                        try:
+                            val = complex(expr.subs(test_subs).evalf())
+                            return abs(val.imag) < 1e-10 * (abs(val) + 1e-10)
+                        except Exception:
+                            return False
+
+                    real_sols = [s for s in sols
+                                 if s.is_real is not False
+                                 and _is_numerically_real(s)]
+
+                # Third try: all non-complex
+                if not real_sols:
+                    real_sols = [s for s in sols if s.is_real is not False]
+
                 if not real_sols:
                     raise OnlyComplexRootsError(eq_expr, sols)
 
@@ -200,4 +232,5 @@ def expand_regular_algebraic(
     composite_terms = [known[x_syms[k]] * eps**k for k in range(N + 1)]
     h.composite = Add(*composite_terms)
 
+    h._problem = problem
     return h

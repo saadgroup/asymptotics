@@ -83,7 +83,7 @@ class BoundaryLayerHierarchy:
         self.f_expr         = None
 
 
-    def compare_numeric(self, eps, problem=None, **kwargs):
+    def compare_numeric(self, eps, params=None, **kwargs):
         """
         Compare this expansion against a numerical solution.
 
@@ -92,8 +92,8 @@ class BoundaryLayerHierarchy:
         eps : float
             Value of the small parameter ε to use.
         problem : ODE, optional
-            The original ODE problem object. Required for ODE and
-            boundary layer hierarchies to reconstruct the RHS.
+            The original problem object. Defaults to the equation
+            used to create this hierarchy — usually not needed.
         **kwargs
             t_range   : [a, b]  — domain for plotting (ODE only)
             n_points  : int     — number of plot points (default 300)
@@ -108,7 +108,8 @@ class BoundaryLayerHierarchy:
             (boundary layer also returns 'u_outer', 'u_inner', 'u_composite')
         """
         from asymptotics.numerics import compare_numeric
-        return compare_numeric(self, eps, problem=problem, **kwargs)
+        problem = getattr(self, '_problem', None)
+        return compare_numeric(self, eps, params=params, **kwargs)
 
 
     def to_latex(self, environment='align', show_orders=False, filename=None):
@@ -137,6 +138,40 @@ class BoundaryLayerHierarchy:
         from asymptotics.latex_export import to_latex
         return to_latex(self, environment=environment,
                         show_orders=show_orders, filename=filename)
+
+
+    def eval(self, eps, at=None, params=None):
+        """
+        Evaluate the perturbation composite at given eps and independent variable values.
+
+        Parameters
+        ----------
+        eps : float or list of float
+            Value(s) of the small parameter.
+        at : array-like, optional
+            Values of the independent variable (for ODEs).
+            Not needed for algebraic equations.
+
+        Returns
+        -------
+        For ODEs:
+            ndarray if eps is scalar, dict {eps: ndarray} if eps is a list
+        For algebraic:
+            float if eps is scalar, ndarray if eps is a list
+
+        Examples
+        --------
+        >>> # ODE
+        >>> t_vals = np.linspace(0, 20, 300)
+        >>> u = sol.eval(eps=0.1, at=t_vals)           # ndarray
+        >>> u = sol.eval(eps=[0.1, 0.2], at=t_vals)    # dict {0.1: array, 0.2: array}
+        >>>
+        >>> # Algebraic
+        >>> x = sol.eval(eps=0.1)                       # float
+        >>> x = sol.eval(eps=[0.1, 0.2, 0.3])           # ndarray
+        """
+        from asymptotics.eval import eval_hierarchy
+        return eval_hierarchy(self, eps, at=at, params=params)
 
     def show(self, mode: str = "auto") -> None:
         from asymptotics.display.boundary_layer_display import show_boundary_layer
@@ -401,4 +436,5 @@ def expand_boundary_layer(problem, order: int = 0) -> BoundaryLayerHierarchy:
     composite = outer_expr + inner_particular.subs(xi, xi_expr) - outer_at_layer
     h.composite = simplify(composite)
 
+    h._problem = problem
     return h

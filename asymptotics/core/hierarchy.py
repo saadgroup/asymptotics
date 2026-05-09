@@ -22,32 +22,6 @@ class OrderEntry:
     note        : str = ""
 
 
-    def to_latex(self, environment='align', show_orders=False, filename=None):
-        """
-        Export this expansion as LaTeX source.
-
-        Parameters
-        ----------
-        environment : str
-            LaTeX math environment: 'align' (default), 'equation', or 'gather'.
-        show_orders : bool
-            If True, include each order u_k separately. Default False.
-        filename : str, optional
-            If given, write to this file. Otherwise print to console.
-
-        Returns
-        -------
-        str — the LaTeX source string
-
-        Examples
-        --------
-        >>> print(sol.to_latex())
-        >>> sol.to_latex(filename="result.tex")
-        >>> sol.to_latex(environment='equation', show_orders=True)
-        """
-        from asymptotics.latex_export import to_latex
-        return to_latex(self, environment=environment,
-                        show_orders=show_orders, filename=filename)
 
     def show(self):
         print(f"  O(eps^{self.order})")
@@ -104,6 +78,80 @@ class OrderHierarchy:
     # ------------------------------------------------------------------
     # Display
     # ------------------------------------------------------------------
+
+    def compare_numeric(self, eps, params=None, **kwargs):
+        """
+        Compare algebraic perturbation expansion against scipy root-finder.
+
+        Plots the perturbation composite vs the exact root as a function
+        of eps over the range [0, eps_max].
+
+        Parameters
+        ----------
+        eps : float
+            Representative eps value (used to set default eps_max = 3*eps).
+        eps_max : float, optional
+            Maximum eps for the plot. Default: 3*eps.
+        n_points : int
+            Number of eps values to evaluate. Default 100.
+
+        Returns
+        -------
+        dict with keys: 'eps', 'perturbation', 'numerical', 'fig'
+        """
+        from asymptotics.numerics import compare_numeric
+        problem = getattr(self, '_problem', None)
+        return compare_numeric(self, eps, params=params, **kwargs)
+
+    def to_latex(self, environment='align', show_orders=False, filename=None):
+        """
+        Export this expansion as LaTeX source.
+
+        Parameters
+        ----------
+        environment : str
+            LaTeX math environment: 'align' (default), 'equation', or 'gather'.
+        show_orders : bool
+            If True, include each order solution separately. Default False.
+        filename : str, optional
+            If given, write to this file. Otherwise print to console.
+
+        Returns
+        -------
+        str — the LaTeX source string
+
+        Examples
+        --------
+        >>> sol.to_latex()
+        >>> sol.to_latex(show_orders=True)
+        >>> sol.to_latex(filename="result.tex")
+        """
+        from asymptotics.latex_export import to_latex
+        return to_latex(self, environment=environment,
+                        show_orders=show_orders, filename=filename)
+
+    def eval(self, eps, at=None, params=None):
+        """
+        Evaluate the perturbation composite at given eps and optional point array.
+
+        Parameters
+        ----------
+        eps : float or list of float
+            Value(s) of the small parameter.
+        at : array-like, optional
+            Not needed for algebraic equations.
+
+        Returns
+        -------
+        float if eps is scalar, ndarray if eps is a list
+
+        Examples
+        --------
+        >>> x = sol.eval(eps=0.1)
+        >>> x = sol.eval(eps=[0.1, 0.2, 0.3])
+        """
+        from asymptotics.eval import eval_hierarchy
+        return eval_hierarchy(self, eps, at=at, params=params)
 
     def show(self, orders=None, mode: str = "auto") -> None:
         """

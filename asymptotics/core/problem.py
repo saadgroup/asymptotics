@@ -118,6 +118,13 @@ class AlgebraicEquation(PerturbationEquation):
         self._dependent_name   = dependent
         self._small_param_name = small_param
 
+        # Detect symbolic parameters
+        raw_params = _detect_params(str(self.equation), dependent, '', small_param)
+        self.params = raw_params
+        if raw_params:
+            _params_warning(raw_params, method='eval', has_at=False)
+
+
     def expand_regular(self, order: int = 3, root_index: int = 0):
         """
         Apply regular perturbation theory to this algebraic equation.
@@ -192,6 +199,66 @@ def _print_inference(dep, indep, dep_supplied, indep_supplied):
         f"independent = '{indep}' ({indep_note})\n"
         f"     To override: ODE(..., dependent='{dep}', independent='{indep}')"
     )
+
+# ---------------------------------------------------------------------------
+# Parameter detection
+# ---------------------------------------------------------------------------
+
+def _params_warning(params, method='eval', has_at=False):
+    """Print a consistent warning when symbolic parameters are detected."""
+    param_dict = ', '.join(f"'{p}': value" for p in sorted(params))
+    at_arg = ', at=t_vals' if has_at else ''
+    print(
+        f"  ⚠️  symbolic parameters detected: {set(sorted(params))}\n"
+        f"     Provide values at eval/compare time:\n"
+        f"     sol.{method}(eps=0.1{at_arg}, params={{{param_dict}}})"
+    )
+
+
+def _params_error(params, method='eval', has_at=False):
+    """Return a consistent error message for missing symbolic parameters."""
+    param_dict = ', '.join(f"'{p}': value" for p in sorted(params))
+    at_arg = ', at=t_vals' if has_at else ''
+    return (
+        f"\n\n  Equation has symbolic parameters: {set(sorted(params))}\n"
+        f"  Provide values:\n"
+        f"    sol.{method}(eps=..{at_arg}, params={{{param_dict}}})\n"
+    )
+
+_MATH_NAMES = {
+    'sin','cos','exp','log','tan','cot','sec','csc',
+    'sqrt','pi','E','I','oo','Abs','sign','floor','ceiling',
+    'sinh','cosh','tanh','asin','acos','atan','atan2',
+}
+
+def _detect_params(eq_str, dependent, independent, small_param):
+    """
+    Detect symbolic parameters in an equation string.
+    Parameters are free symbols that are not: dependent, independent,
+    small_param, math function names, or derivative notation artifacts.
+    """
+    tokens = set(_re.findall(r"[a-zA-Z_]\w*", eq_str))
+    exclude = {dependent, independent or '', small_param} | _MATH_NAMES
+    # Exclude derivative notation: du, d2u, etc.
+    exclude |= {f'd{dependent}', f'd2{dependent}', f'd3{dependent}'}
+    return tokens - exclude
+
+
+def _check_ambiguous_params(params, indep_candidates, indep_supplied, dependent):
+    """
+    If any detected parameter is in {x,y,z,t} and independent was inferred
+    (not explicitly supplied), raise a hard error.
+    """
+    ambiguous = params & indep_candidates
+    if ambiguous and not indep_supplied:
+        raise ValueError(
+            f"\n\n  Ambiguous symbols detected: {ambiguous}\n"
+            f"  These could be the independent variable OR symbolic parameters.\n"
+            f"  Please specify 'independent' explicitly to resolve the ambiguity:\n"
+            f"    ODE(..., independent='t')   # if {list(ambiguous)[0]} is a parameter\n"
+            f"    ODE(..., independent='{list(ambiguous)[0]}')  # if it's the independent variable\n"
+        )
+
 
 # ---------------------------------------------------------------------------
 # ODE equations
@@ -306,6 +373,35 @@ class ODE(PerturbationEquation):
 
         # Print inference summary
         _print_inference(dependent, independent, dep_supplied, indep_supplied)
+
+        # Detect symbolic parameters — scan both equation AND condition values
+        raw_params = _detect_params(equation, dependent, independent, small_param)
+
+        # Also detect symbols in condition values (e.g. u(0) = A)
+        for cond_str in conditions:
+            cond_params = _detect_params(cond_str, dependent, independent, small_param)
+            # Only keep symbols that appear as values (after the =), not as points
+            # Exclude numeric-looking tokens and the point variable
+            raw_params |= cond_params
+
+        # Remove any symbols that are clearly points (numbers) not parameters
+        # Keep only symbols that SymPy would treat as unknowns
+        from sympy import sympify as _sympify
+        confirmed_params = set()
+        for p in raw_params:
+            try:
+                val = _sympify(p)
+                if val.is_Symbol:
+                    confirmed_params.add(p)
+            except Exception:
+                pass
+        raw_params = confirmed_params
+
+        _check_ambiguous_params(raw_params, _INDEP_CANDIDATES, indep_supplied, dependent)
+        self.params = raw_params   # set of symbol names
+
+        if raw_params:
+            _params_warning(raw_params, method='eval', has_at=True)
 
         # Store names
         self._equation_str     = equation
@@ -530,6 +626,18 @@ class AlgebraicSystem:
         self._dependent_names = dependents
         self._small_param_name = small_param
         self.root_hint        = root_hint
+
+        # Detect symbolic parameters across all equations
+        raw_params = set()
+        for eq_str in equations:
+            raw_params |= _detect_params(eq_str, '', '', small_param)
+        # Remove dependent variable names
+        for dep in dependents:
+            raw_params.discard(dep)
+        self.params = raw_params
+        if raw_params:
+            _params_warning(raw_params, method='eval', has_at=False)
+
 
     def __repr__(self):
         eqs = ", ".join(str(e) for e in self.equations)

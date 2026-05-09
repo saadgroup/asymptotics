@@ -62,6 +62,65 @@ class SystemHierarchy:
     # Display
     # ------------------------------------------------------------------
 
+    def eval(self, eps, **kwargs):
+        """
+        Evaluate the algebraic system expansion at given eps values.
+
+        Parameters
+        ----------
+        eps : float or list of float
+
+        Returns
+        -------
+        dict {var_name: float or ndarray}
+
+        Examples
+        --------
+        >>> r = sol.eval(eps=0.1)
+        >>> r['x'], r['y']
+        >>> r = sol.eval(eps=[0.1, 0.2, 0.3])
+        >>> r['x']  # ndarray
+        """
+        from asymptotics.eval import eval_hierarchy
+        return eval_hierarchy(self, eps, **kwargs)
+
+    def to_latex(self, environment='align', show_orders=False, filename=None):
+        """
+        Export this expansion as LaTeX source.
+
+        Parameters
+        ----------
+        environment : str
+            'align' (default), 'equation', or 'gather'.
+        show_orders : bool
+            Include each order separately. Default False.
+        filename : str, optional
+            Save to file if given, otherwise print to console.
+
+        Returns
+        -------
+        str — the LaTeX source string
+        """
+        from asymptotics.latex_export import to_latex
+        return to_latex(self, environment=environment,
+                        show_orders=show_orders, filename=filename)
+
+    def compare_numeric(self, eps, params=None, **kwargs):
+        """
+        Compare algebraic system expansion against scipy root-finder.
+
+        Parameters
+        ----------
+        eps : float or list of float
+            Plots x(eps) vs exact roots over the eps range.
+
+        Returns
+        -------
+        dict with 'eps', 'perturbation', 'numerical', 'fig'
+        """
+        from asymptotics.numerics import compare_numeric
+        return compare_numeric(self, eps, params=params, **kwargs)
+
     def show(self, orders=None, mode: str = "auto") -> None:
         """
         Render the full coupled hierarchy — coupled equations at each order.

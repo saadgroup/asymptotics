@@ -72,6 +72,7 @@ from asymptotics.core.conditions import ConditionError
 from asymptotics.core.ode_system import ODESystem
 from asymptotics.methods.regular_ode_system import ODESystemHierarchy
 from asymptotics.numerics import compare_numeric
+from asymptotics.eval import eval_hierarchy as eval
 from asymptotics.latex_export import to_latex
 
 # ---------------------------------------------------------------------------
@@ -109,6 +110,7 @@ __all__ = [
     "ODESystem",
     "ODESystemHierarchy",
     "compare_numeric",
+    "eval",
     "to_latex",
     # Convenience
     "expand_regular",
