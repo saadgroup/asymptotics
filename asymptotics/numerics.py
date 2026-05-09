@@ -583,55 +583,46 @@ def _compare_algebraic_system(h, eps_list, problem=None, **kwargs):
 
 def _build_ode_rhs(h, eps_val, problem, param_subs=None):
     """
-    Build a scipy-compatible RHS function from the problem's equation.
-    Returns f(t, y) where y = [u, u'].
+    Build a scipy-compatible RHS for an ODE of any order N.
+    State vector: y = [u, u', u'', ..., u^(N-1)]
+    Returns f(t, y) with len N.
     """
     if problem is None:
         raise ValueError(
             "\n\n  compare_numeric needs the original problem object.\n"
-            "  Call: sol.compare_numeric(eps=0.1, problem=eq)\n"
         )
 
-    f_orig   = problem.equation
-    eps_sym  = problem.small_param
-    t_sym    = problem._indep_sym
-    u_sym    = Symbol(problem._dependent_name)
-    du_sym   = problem._deriv_syms.get(1)
-    d2u_sym  = problem._deriv_syms.get(2)
+    f_orig    = problem.equation
+    eps_sym   = problem.small_param
+    t_sym     = problem._indep_sym
+    u_sym     = Symbol(problem._dependent_name)
+    ode_order = problem.ode_order
+    deriv_syms = problem._deriv_syms  # {1: du, 2: d2u, ...}
 
     param_subs = param_subs or {}
-    f_at_eps  = f_orig.subs(eps_sym, eps_val).subs(param_subs)
-    ode_order = problem.ode_order
+    f_at_eps   = f_orig.subs(eps_sym, eps_val).subs(param_subs)
 
-    if ode_order == 1:
-        # First-order: solve for du, state = [u]
-        du_rhs = solve(f_at_eps, du_sym)
-        if not du_rhs:
-            raise ValueError(
-                f"\n\n  Could not solve equation for u': {f_at_eps}\n"
-            )
-        du_fn = lambdify([t_sym, u_sym], du_rhs[0], 'numpy')
+    # Solve for the highest derivative
+    highest_sym = deriv_syms.get(ode_order)
+    rhs_sols = solve(f_at_eps, highest_sym)
+    if not rhs_sols:
+        raise ValueError(
+            f"\n\n  Could not solve equation for highest derivative: {f_at_eps}\n"
+        )
+    highest_expr = rhs_sols[0]
 
-        def rhs(t, y):
-            return [float(du_fn(t, y[0]))]
+    # Build lambdify args: [t, u, du, d2u, ..., d(N-1)u]
+    lam_args = [t_sym, u_sym] + [deriv_syms[k] for k in range(1, ode_order) if k in deriv_syms]
+    highest_fn = lambdify(lam_args, highest_expr, "numpy")
 
-    else:
-        # Second-order: solve for d2u, state = [u, u']
-        d2u_rhs = solve(f_at_eps, d2u_sym)
-        if not d2u_rhs:
-            raise ValueError(
-                f"\n\n  Could not solve equation for u'': {f_at_eps}\n"
-            )
-        d2u_expr = d2u_rhs[0]
-        args     = [t_sym, u_sym] + ([du_sym] if du_sym else [])
-        d2u_fn   = lambdify(args, d2u_expr, 'numpy')
+    # State: y[0]=u, y[1]=u', ..., y[N-1]=u^(N-1)
+    n_args = len(lam_args)
 
-        if du_sym:
-            def rhs(t, y):
-                return [y[1], float(d2u_fn(t, y[0], y[1]))]
-        else:
-            def rhs(t, y):
-                return [y[1], float(d2u_fn(t, y[0]))]
+    def rhs(t, y):
+        # dy[k]/dt = y[k+1] for k < N-1
+        # dy[N-1]/dt = f(t, y[0], ..., y[N-1])
+        args = [t] + list(y[:n_args-1])
+        return list(y[1:ode_order]) + [float(highest_fn(*args))]
 
     return rhs
 

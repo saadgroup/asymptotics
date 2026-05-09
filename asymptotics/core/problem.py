@@ -239,8 +239,8 @@ def _detect_params(eq_str, dependent, independent, small_param):
     """
     tokens = set(_re.findall(r"[a-zA-Z_]\w*", eq_str))
     exclude = {dependent, independent or '', small_param} | _MATH_NAMES
-    # Exclude derivative notation: du, d2u, etc.
-    exclude |= {f'd{dependent}', f'd2{dependent}', f'd3{dependent}'}
+    # Exclude derivative notation: du, d2u, d3u, d4u, d5u, d6u
+    exclude |= {f'd{dependent}'} | {f'd{n}{dependent}' for n in range(2, 7)}
     return tokens - exclude
 
 
@@ -267,22 +267,22 @@ def _check_ambiguous_params(params, indep_candidates, indep_supplied, dependent)
 def _preprocess_ode_string(eq_str: str, dep: str) -> str:
     """
     Convert prime notation to internal derivative symbols.
-    u'' -> d2u,  u' -> du,  u -> u  (in that order, longest first)
+    Process longest first: u''''->d4u, u'''->d3u, u''->d2u, u'->du
     """
-    import re
-    eq_str = eq_str.replace(dep + "''", f"d2{dep}")
-    eq_str = eq_str.replace(dep + "'",  f"d{dep}")
+    for n in range(6, 0, -1):
+        primes = "'" * n
+        sym = f"d{n}{dep}" if n > 1 else f"d{dep}"
+        eq_str = eq_str.replace(dep + primes, sym)
     return eq_str
 
 
 def _detect_ode_order(eq_str: str, dep: str) -> int:
     """Detect ODE order from prime notation in the equation string."""
-    if dep + "''" in eq_str:
-        return 2
-    elif dep + "'" in eq_str:
-        return 1
-    else:
-        return 0
+    for n in range(6, 0, -1):
+        primes = "'" * n
+        if dep + primes in eq_str:
+            return n
+    return 0
 
 
 class ODE(PerturbationEquation):

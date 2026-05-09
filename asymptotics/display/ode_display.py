@@ -4,7 +4,7 @@ asymptotics.display.ode_display
 Rich display for ODEHierarchy objects.
 """
 
-from sympy import latex
+from sympy import latex, Eq, Symbol, diff
 
 def _latex_eps(expr, eps_sym):
     """Render as LaTeX, substituting eps symbol -> varepsilon for display."""
@@ -12,6 +12,7 @@ def _latex_eps(expr, eps_sym):
     if eps_sym is not None and str(eps_sym) not in ('epsilon', 'varepsilon'):
         expr = expr.subs(eps_sym, _Sym('varepsilon'))
     return latex(expr)
+
 
 def show_ode(h, orders=None, mode: str = "auto") -> None:
     """Render an ODEHierarchy with LaTeX in Jupyter or plain text."""
