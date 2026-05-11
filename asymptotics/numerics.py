@@ -81,6 +81,9 @@ def compare_numeric(hierarchy, eps, params=None, **kwargs):
 
     from asymptotics.methods.regular_ode_system import ODESystemHierarchy
     from asymptotics.core.system_hierarchy import SystemHierarchy
+    from asymptotics.methods.stepwise import StepwiseHierarchy
+    if isinstance(hierarchy, StepwiseHierarchy):
+        return _compare_ode(hierarchy, eps_list, **kwargs)
     if isinstance(hierarchy, SystemHierarchy):
         return _compare_algebraic_system(hierarchy, eps_list, **kwargs)
     elif isinstance(hierarchy, ODESystemHierarchy):
@@ -158,6 +161,21 @@ def _compare_algebraic(h, eps_list, n_points=100, problem=None, **kwargs):
 
 def _compare_ode(h, eps_list, plot_range=None, n_points=300, problem=None, **kwargs):
     problem = problem or getattr(h, "_problem", None)
+    # Limit conditions cannot be reliably handled by scipy BVP solvers
+    if problem is not None:
+        limit_conds = [c for c in problem.conditions if getattr(c, 'is_limit', False)]
+        if limit_conds:
+            lc_strs = [str(lc) for lc in limit_conds]
+            raise NotImplementedError(
+                f"\n\n  compare_numeric does not support limit boundary conditions:\n"
+                + "".join(f"    {s}\n" for s in lc_strs) +
+                f"\n  Singular BVPs require specialized numerical treatment\n"
+                f"  (e.g. Frobenius-type methods or Mathematica's NDSolve).\n"
+                f"\n  You can still use the symbolic expansion:\n"
+                f"    sol.show()\n"
+                f"    sol.eval(eps=0.1, at=t_vals)\n"
+                f"    sol.to_latex()\n"
+            )
     """
     Compare ODE perturbation expansion against scipy numerical solution.
     eps_list : list of floats — one curve pair per eps value.
@@ -231,10 +249,11 @@ def _solve_ode_bvp(h, eps_val, plot_range, t_vals, problem, param_subs=None):
     """Solve BVP numerically using solve_bvp."""
     from scipy.integrate import solve_bvp as _solve_bvp
 
-    rhs_fn, bc_fn = _build_bvp_rhs_bc(h, eps_val, problem, plot_range, param_subs=param_subs)
+    rhs_fn, bc_fn, a_bc, b_bc = _build_bvp_rhs_bc(h, eps_val, problem, plot_range, param_subs=param_subs)
 
-    x_grid = np.linspace(plot_range[0], plot_range[1], 50)
-    y0     = np.zeros((2, len(x_grid)))
+    x_grid = np.linspace(a_bc, b_bc, 50)
+    ode_order = getattr(problem, "ode_order", 2)
+    y0     = np.zeros((ode_order, len(x_grid)))
     y0[0]  = np.linspace(0, 1, len(x_grid))
 
     sol = _solve_bvp(rhs_fn, bc_fn, x_grid, y0, tol=1e-8, max_nodes=5000)
@@ -347,7 +366,7 @@ def _compare_boundary_layer(h, eps_list, n_points=400, problem=None, **kwargs):
         u_inner = _eval(h.inner_xi)
         u_comp  = _eval(h.composite)
 
-        rhs_fn, bc_fn = _build_bvp_rhs_bc(h, eps_val, problem, [0, 1])
+        rhs_fn, bc_fn, _, __ = _build_bvp_rhs_bc(h, eps_val, problem, [0, 1])
         x_num = _layer_aware_grid(eps_val, layer_side, n_points)
         y0    = np.zeros((2, len(x_num)))
         y0[0] = np.real(_eval_at(h.composite, eps_sym, eps_val, x_sym, x_num))
@@ -621,44 +640,110 @@ def _build_ode_rhs(h, eps_val, problem, param_subs=None):
     def rhs(t, y):
         # dy[k]/dt = y[k+1] for k < N-1
         # dy[N-1]/dt = f(t, y[0], ..., y[N-1])
-        args = [t] + list(y[:n_args-1])
+        # lam_args = [t, u, du, ..., d(N-1)u] — always ode_order+1 args
+        args = [t] + list(y[:ode_order])
         return list(y[1:ode_order]) + [float(highest_fn(*args))]
 
     return rhs
 
 
 def _build_bvp_rhs_bc(h, eps_val, problem, x_range, param_subs=None):
-    """Build RHS and BC functions for solve_bvp."""
+    """
+    Build RHS and BC functions for solve_bvp, any ODE order.
+
+    Limit conditions are approximated as near-point conditions at delta=1e-4.
+    Warning is printed when limit conditions are present.
+    """
     if problem is None:
-        raise ValueError(
-            "\n\n  compare_numeric needs the original problem object.\n"
-            "  Call: sol.compare_numeric(eps=0.1, problem=eq)\n"
+        raise ValueError("\n\n  compare_numeric needs the original problem object.\n")
+
+    from asymptotics.core.conditions import LimitCondition as _LC
+    import warnings
+
+    param_subs  = param_subs or {}
+    delta       = 1e-4
+    ode_order   = problem.ode_order
+    point_conds = [c for c in problem.conditions if not getattr(c, 'is_limit', False)]
+    limit_conds = [c for c in problem.conditions if getattr(c, 'is_limit', False)]
+
+    if limit_conds:
+        warnings.warn(
+            "\n  Limit boundary conditions are approximated numerically.\n"
+            f"  Using delta={delta} as approximate singular boundary.\n"
+            "  Results near the singular point may be less accurate.",
+            UserWarning, stacklevel=4
         )
 
-    rhs_ode = _build_ode_rhs(h, eps_val, problem)
+    # Build the scalar ODE RHS
+    rhs_ode = _build_ode_rhs(h, eps_val, problem, param_subs=param_subs)
 
+    # scipy solve_bvp needs f(x, y) returning (N, M) array
     def rhs_bvp(x, y):
-        dudt  = np.zeros_like(y)
+        dudt = np.zeros_like(y)
         for i in range(y.shape[1]):
             r = rhs_ode(x[i], y[:, i])
-            dudt[0, i] = r[0]
-            dudt[1, i] = r[1]
+            for j in range(ode_order):
+                dudt[j, i] = r[j]
         return dudt
 
-    # BCs from conditions
-    conds  = problem.conditions
-    bc_dict = {c.point: c.value for c in conds if c.deriv_order == 0}
-    pts    = sorted(bc_dict.keys(), key=lambda p: float(p.evalf()))
-    a, b   = float(pts[0].evalf()), float(pts[1].evalf())
-    param_subs = param_subs or {}
-    va_raw, vb_raw = bc_dict[pts[0]], bc_dict[pts[1]]
-    va = float(va_raw.subs(param_subs) if hasattr(va_raw, "subs") else va_raw)
-    vb = float(vb_raw.subs(param_subs) if hasattr(vb_raw, "subs") else vb_raw)
+    # Determine boundary points
+    bc_by_point = {}  # {float_point: [(deriv_order, float_value), ...]}
+    for c in point_conds:
+        pt = float(c.point.evalf())
+        val = float(c.value.subs(param_subs) if hasattr(c.value, 'subs') else c.value)
+        bc_by_point.setdefault(pt, []).append((c.deriv_order, val))
 
-    def bc_bvp(ya, yb):
-        return [ya[0] - va, yb[0] - vb]
+    pts_sorted = sorted(bc_by_point.keys())
 
-    return rhs_bvp, bc_bvp
+    if len(pts_sorted) == 1 and limit_conds:
+        # One standard boundary + limit at singular point
+        reg_pt   = pts_sorted[0]
+        sing_pts = [float(lc.point.evalf()) for lc in limit_conds]
+        sing_pt  = min(sing_pts)
+
+        if sing_pt < reg_pt:
+            a, b    = sing_pt + delta, reg_pt
+            reg_end = 'b'  # regular conditions at b
+        else:
+            a, b    = reg_pt, sing_pt - delta
+            reg_end = 'a'
+
+        reg_conds = bc_by_point[reg_pt]
+
+        def bc_bvp(ya, yb):
+            reg_state = yb if reg_end == 'b' else ya
+            sing_state = ya if reg_end == 'b' else yb
+            residuals = []
+            for order, val in sorted(reg_conds, key=lambda x: x[0]):
+                residuals.append(reg_state[order] - val)
+            # Limit condition: approximate as 0 at delta
+            # Use deriv_order from limit condition expression
+            # Default: u itself should be 0 at singular boundary
+            for lc in limit_conds:
+                # Approximate: lim condition → value at delta ≈ 0
+                residuals.append(sing_state[0] - float(lc.value))
+            return residuals
+
+    elif len(pts_sorted) == 2:
+        a_pt, b_pt   = pts_sorted[0], pts_sorted[1]
+        a, b         = a_pt, b_pt
+        a_conds      = bc_by_point[a_pt]
+        b_conds      = bc_by_point[b_pt]
+
+        def bc_bvp(ya, yb):
+            residuals = []
+            for order, val in sorted(a_conds, key=lambda x: x[0]):
+                residuals.append(ya[order] - val)
+            for order, val in sorted(b_conds, key=lambda x: x[0]):
+                residuals.append(yb[order] - val)
+            return residuals
+
+    else:
+        raise ValueError(
+            "\n\n  Cannot determine BVP boundary points from conditions.\n"
+        )
+
+    return rhs_bvp, bc_bvp, a, b
 
 
 def _get_ics(h, problem, param_subs=None):
@@ -671,7 +756,16 @@ def _get_ics(h, problem, param_subs=None):
             "  Call: sol.compare_numeric(eps=0.1, problem=eq)\n"
         )
     param_subs = param_subs or {}
-    conds = sorted(problem.conditions, key=lambda c: c.deriv_order)
+    limit_conds = [c for c in problem.conditions if getattr(c, 'is_limit', False)]
+    if limit_conds:
+        import warnings
+        warnings.warn(
+            "\n  Limit boundary conditions cannot be enforced directly in scipy solvers.\n"
+            "  They are skipped in compare_numeric. The numerical solution may differ\n"
+            "  from the perturbation solution near singular points.",
+            UserWarning, stacklevel=4
+        )
+    conds = sorted([c for c in problem.conditions if not getattr(c, 'is_limit', False)], key=lambda c: c.deriv_order)
     ics = []
     for c in conds:
         if float(c.point.evalf()) == float(min(c.point for c in conds).evalf()):

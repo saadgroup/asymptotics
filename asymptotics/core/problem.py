@@ -163,6 +163,7 @@ _MATH_NAMES = {
     'sin','cos','exp','log','tan','cot','sec','csc',
     'sqrt','pi','E','I','oo','Abs','sign','floor','ceiling',
     'sinh','cosh','tanh','asin','acos','atan','atan2',
+    'lim',  # limit condition keyword
 }
 
 def _infer_dependent(conditions):
@@ -229,6 +230,7 @@ _MATH_NAMES = {
     'sin','cos','exp','log','tan','cot','sec','csc',
     'sqrt','pi','E','I','oo','Abs','sign','floor','ceiling',
     'sinh','cosh','tanh','asin','acos','atan','atan2',
+    'lim',  # limit condition keyword
 }
 
 def _detect_params(eq_str, dependent, independent, small_param):
@@ -378,10 +380,11 @@ class ODE(PerturbationEquation):
         raw_params = _detect_params(equation, dependent, independent, small_param)
 
         # Also detect symbols in condition values (e.g. u(0) = A)
+        # Skip limit conditions — they have complex syntax handled separately
         for cond_str in conditions:
+            if cond_str.strip().lower().startswith('lim('):
+                continue
             cond_params = _detect_params(cond_str, dependent, independent, small_param)
-            # Only keep symbols that appear as values (after the =), not as points
-            # Exclude numeric-looking tokens and the point variable
             raw_params |= cond_params
 
         # Remove any symbols that are clearly points (numbers) not parameters
@@ -474,6 +477,42 @@ class ODE(PerturbationEquation):
         self._validate_order(order, "expand_regular")
         from asymptotics.methods.regular_ode import expand_regular_ode
         return expand_regular_ode(self, order=order)
+
+    def begin_expansion(self, order: int = 2):
+        """
+        Set up a step-by-step perturbation expansion without solving.
+
+        The order-by-order equations are extracted symbolically immediately.
+        Solutions are obtained one at a time via:
+            sol[k].solve()           — try SymPy
+            sol[k].set_solution(expr) — provide manually
+
+        Parameters
+        ----------
+        order : int
+            Highest power of eps to expand to. Default 2.
+
+        Returns
+        -------
+        StepwiseHierarchy
+
+        Examples
+        --------
+        >>> sol = eq.begin_expansion(order=2)
+        >>> sol.show()                          # see all equations
+        >>>
+        >>> sol[0].solve()                      # try SymPy
+        >>> sol[0].set_solution("4*eta - 4*eta**2")  # or manually
+        >>>
+        >>> sol[1].solve()
+        >>> sol.solve_all()                     # try all remaining
+        >>>
+        >>> sol.composite                       # available once all solved
+        >>> sol.eval(eps=0.1, at=eta_vals)
+        """
+        self._validate_order(order, "begin_expansion")
+        from asymptotics.methods.stepwise import begin_expansion_ode
+        return begin_expansion_ode(self, order=order)
 
     def expand_boundary_layer(self, order: int = 0):
         """

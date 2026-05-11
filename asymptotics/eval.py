@@ -80,7 +80,10 @@ def eval_hierarchy(h, eps, at=None, params=None):
     param_subs = {Symbol(k): v for k, v in params.items()} if params else {}
 
     from asymptotics.core.system_hierarchy import SystemHierarchy
-    if isinstance(h, SystemHierarchy):
+    from asymptotics.methods.stepwise import StepwiseHierarchy
+    if isinstance(h, StepwiseHierarchy):
+        return _eval_ode(h, eps_list, at, scalar, param_subs)
+    elif isinstance(h, SystemHierarchy):
         return _eval_algebraic_system(h, eps_list, scalar, param_subs)
     elif isinstance(h, OrderHierarchy):
         return _eval_algebraic(h, eps_list, scalar, param_subs)

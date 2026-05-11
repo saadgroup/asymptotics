@@ -170,6 +170,91 @@ class ODEOrderEntry:
         self.solution            = particular_solution
 
 
+
+def _apply_limit_condition(cond, gen_expr, t_sym, dep_name, deriv_syms, order_k):
+    """
+    Apply a limit condition to the general solution at order k.
+
+    For each free constant C_i, check if it causes the limit expression
+    to diverge — if so, set C_i = 0.
+    """
+    from sympy import (Symbol, diff, limit, Eq, oo, zoo, nan,
+                       sympify, series)
+    from asymptotics.core.problem import _preprocess_ode_string
+
+    var_sym   = Symbol(cond.var_str)
+    lim_point = cond.point
+    lim_value = cond.value if order_k == 0 else sympify(0)
+
+    # Preprocess: replace u\'\', u\' with d2u, du in expr_str
+    expr_proc = _preprocess_ode_string(cond.expr_str, dep_name)
+
+    # Build namespace: map dep and derivatives to gen_expr
+    ns = {dep_name: gen_expr, cond.var_str: var_sym}
+    for k_d, dsym in deriv_syms.items():
+        dname = "d{}{}".format(k_d if k_d > 1 else "", dep_name)
+        expr_val = diff(gen_expr, t_sym, k_d)
+        if str(var_sym) != str(t_sym):
+            expr_val = expr_val.subs(t_sym, var_sym)
+        ns[dname] = expr_val
+
+    if str(var_sym) == str(t_sym):
+        pass  # already in t_sym
+    else:
+        if dep_name in ns:
+            ns[dep_name] = gen_expr.subs(t_sym, var_sym)
+
+    try:
+        full_expr = sympify(expr_proc, locals=ns, convert_xor=False)
+    except Exception as e:
+        raise RuntimeError(
+            "\n\n  Could not parse limit expression: \"{}\"\n  Error: {}\n".format(
+                cond.expr_str, e)
+        )
+
+    # Free constants in this general solution
+    free_consts = sorted(
+        [s for s in gen_expr.free_symbols
+         if str(s).startswith("C") and str(s)[1:].isdigit()],
+        key=lambda s: int(str(s)[1:])
+    )
+
+    if not free_consts:
+        try:
+            lv = limit(full_expr, var_sym, lim_point, "+")
+            if lv.is_finite:
+                return Eq(lv, lim_value) if lv != lim_value else True
+        except Exception:
+            pass
+        return True
+
+    # Try direct limit
+    try:
+        lv = limit(full_expr, var_sym, lim_point, "+")
+        if lv.is_finite and not lv.has(oo, zoo, nan):
+            return Eq(lv, lim_value)
+    except Exception:
+        pass
+
+    # Identify which constants cause divergence
+    for C in free_consts:
+        test_subs = {c: 0 for c in free_consts if c != C}
+        test_expr = full_expr.subs(test_subs)
+        try:
+            lv_test = limit(test_expr, var_sym, lim_point, "+")
+            if not lv_test.is_finite or lv_test.has(oo, zoo, nan):
+                return Eq(C, 0)
+        except Exception:
+            try:
+                s = series(test_expr, var_sym, lim_point, 1)
+                lv_s = limit(s.removeO(), var_sym, lim_point, "+")
+                if not lv_s.is_finite:
+                    return Eq(C, 0)
+            except Exception:
+                pass
+
+    return True  # condition automatically satisfied
+
 def expand_regular_ode(problem, order: int = 2) -> ODEHierarchy:
     """
     Apply regular perturbation theory to an ODE.
@@ -282,18 +367,26 @@ def expand_regular_ode(problem, order: int = 2) -> ODEHierarchy:
 
         # Build order-k conditions
         # At order 0: full condition value
-        # At order k>0: homogeneous (value = 0) since correction terms are zero
-        #   UNLESS the condition itself has eps dependence (not supported yet)
+        # At order k>0: homogeneous (value = 0)
+        from asymptotics.core.conditions import LimitCondition as _LimitCond
         cond_equations = []
         for cond in conds:
-            pt  = cond.point
-            val = cond.value if k == 0 else sympify(0)
-            # Evaluate the k-th order solution derivative at the point
-            if cond.deriv_order == 0:
-                expr_at_pt = gen_expr.subs(t, pt)
+            if isinstance(cond, _LimitCond):
+                # Limit condition: lim(expr, var, point) = value
+                _eq = _apply_limit_condition(
+                    cond, gen_expr, t, dep,
+                    problem._deriv_syms, k
+                )
+                if _eq is not None and _eq is not True:
+                    cond_equations.append(_eq)
             else:
-                expr_at_pt = diff(gen_expr, t, cond.deriv_order).subs(t, pt)
-            cond_equations.append(Eq(expr_at_pt, val))
+                pt  = cond.point
+                val = cond.value if k == 0 else sympify(0)
+                if cond.deriv_order == 0:
+                    expr_at_pt = gen_expr.subs(t, pt)
+                else:
+                    expr_at_pt = diff(gen_expr, t, cond.deriv_order).subs(t, pt)
+                cond_equations.append(Eq(expr_at_pt, val))
 
         # Solve for integration constants
         try:
