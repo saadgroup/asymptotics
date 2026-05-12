@@ -125,7 +125,7 @@ class AlgebraicEquation(PerturbationEquation):
             _params_warning(raw_params, method='eval', has_at=False)
 
 
-    def expand_regular(self, order: int = 3, root_index: int = 0):
+    def expand_regular(self, order: int = 3, root_index: int = 0, gauge=None):
         """
         Apply regular perturbation theory to this algebraic equation.
 
@@ -136,6 +136,13 @@ class AlgebraicEquation(PerturbationEquation):
         root_index : int
             Which real root of the O(1) equation to follow (default 0 =
             largest real root). Ignored if root_hint is set.
+        gauge : str, list of str, or None
+            Non-standard asymptotic gauge sequence.
+            - None (default) → standard {1, ε, ε², ...}
+            - str  → pattern for geometric inference, e.g. 'sqrt(eps)'
+                     generates {1, √ε, ε, ε^(3/2), ...}
+            - list → explicit sequence of length order+1, e.g.
+                     ['1', 'eps*log(eps)', 'eps']
 
         Returns
         -------
@@ -149,7 +156,8 @@ class AlgebraicEquation(PerturbationEquation):
         NoHigherOrderSolutionError
         """
         from asymptotics.methods.regular_algebraic import expand_regular_algebraic
-        return expand_regular_algebraic(self, order=order, root_index=root_index)
+        return expand_regular_algebraic(self, order=order, root_index=root_index,
+                                        gauge=gauge)
 
 
 # ---------------------------------------------------------------------------
@@ -461,7 +469,7 @@ class ODE(PerturbationEquation):
                 f"\n\n  '{method_name}' order must be non-negative, got {order}.\n"
             )
 
-    def expand_regular(self, order: int = 2):
+    def expand_regular(self, order: int = 2, gauge=None):
         """
         Apply regular perturbation theory to this ODE.
 
@@ -469,6 +477,12 @@ class ODE(PerturbationEquation):
         ----------
         order : int
             Highest power of ε to compute (inclusive). Default 2.
+        gauge : str, list of str, or None
+            Non-standard asymptotic gauge sequence.
+            - None (default) → standard {1, ε, ε², ...}
+            - str  → pattern for geometric inference, e.g. 'sqrt(eps)'
+                     generates {1, √ε, ε, ε^(3/2), ...}
+            - list → explicit sequence of length order+1
 
         Returns
         -------
@@ -476,7 +490,7 @@ class ODE(PerturbationEquation):
         """
         self._validate_order(order, "expand_regular")
         from asymptotics.methods.regular_ode import expand_regular_ode
-        return expand_regular_ode(self, order=order)
+        return expand_regular_ode(self, order=order, gauge=gauge)
 
     def begin_expansion(self, order: int = 2):
         """

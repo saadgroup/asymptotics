@@ -29,6 +29,7 @@ from asymptotics.core.exceptions import (
     NoLeadingOrderSolutionError,
     NoHigherOrderSolutionError,
 )
+from asymptotics.gauge import parse_gauge, extract_coefficients
 
 
 class ODEHierarchy:
@@ -255,7 +256,7 @@ def _apply_limit_condition(cond, gen_expr, t_sym, dep_name, deriv_syms, order_k)
 
     return True  # condition automatically satisfied
 
-def expand_regular_ode(problem, order: int = 2) -> ODEHierarchy:
+def expand_regular_ode(problem, order: int = 2, gauge=None) -> ODEHierarchy:
     """
     Apply regular perturbation theory to an ODE.
 
@@ -263,6 +264,8 @@ def expand_regular_ode(problem, order: int = 2) -> ODEHierarchy:
     ----------
     problem : ODE
     order : int
+    gauge : str, list of str, or None
+        Non-standard gauge sequence. See asymptotics.gauge.parse_gauge.
 
     Returns
     -------
@@ -290,10 +293,15 @@ def expand_regular_ode(problem, order: int = 2) -> ODEHierarchy:
     u_funcs = [Function(f"{dep}_{k}")(t) for k in range(N + 1)]
 
     # ------------------------------------------------------------------
-    # Step 2: build ansatz
-    #   u_ans = u_0(t) + eps*u_1(t) + eps^2*u_2(t) + ...
+    # Step 1b: build gauge sequence
     # ------------------------------------------------------------------
-    u_ans = sum(eps**k * u_funcs[k] for k in range(N + 1))
+    gauge_seq = parse_gauge(gauge, N, eps)
+
+    # ------------------------------------------------------------------
+    # Step 2: build ansatz
+    #   u(t,ε) = u_0(t)·δ_0(ε) + u_1(t)·δ_1(ε) + ...
+    # ------------------------------------------------------------------
+    u_ans = sum(gauge_seq[k] * u_funcs[k] for k in range(N + 1))
 
     # ------------------------------------------------------------------
     # Step 3: substitute ansatz into F
@@ -305,15 +313,14 @@ def expand_regular_ode(problem, order: int = 2) -> ODEHierarchy:
     for k_deriv, dsym in deriv_syms.items():
         f_sub = f_sub.subs(dsym, diff(u_ans, t, k_deriv))
 
-    # Series expand in eps
-    f_series = series(f_sub, eps, 0, N + 1)
+    f_expanded = expand(f_sub)
 
     # ------------------------------------------------------------------
-    # Step 4: collect coefficients at each order
+    # Step 4: collect coefficients by gauge function
+    #   Use sequential limit extraction (works for power-law AND log gauges)
     # ------------------------------------------------------------------
-    coeffs = {}
-    for k in range(N + 1):
-        coeffs[k] = f_series.coeff(eps, k)
+    coeff_list = extract_coefficients(f_expanded, gauge_seq, eps)
+    coeffs     = {k: coeff_list[k] for k in range(N + 1)}
 
     # ------------------------------------------------------------------
     # Step 5: solve order by order
@@ -324,6 +331,7 @@ def expand_regular_ode(problem, order: int = 2) -> ODEHierarchy:
     h._method       = f"Regular perturbation — ODE ({'IVP' if ptype == 'ivp' else 'BVP'})"
     h._problem_repr = f"F({dep}, {dep}', t, {eps}) = 0"
     h._problem_type = ptype
+    h._gauge        = gauge_seq     # stored for display
 
     known_solutions = {}   # u_k(t) -> particular solution expr
 
@@ -428,7 +436,7 @@ def expand_regular_ode(problem, order: int = 2) -> ODEHierarchy:
     # ------------------------------------------------------------------
     # Step 7: composite expansion
     # ------------------------------------------------------------------
-    h.composite = Add(*[known_solutions[u_funcs[k]] * eps**k for k in range(N + 1)])
+    h.composite = Add(*[known_solutions[u_funcs[k]] * gauge_seq[k] for k in range(N + 1)])
 
     h._problem = problem
     return h

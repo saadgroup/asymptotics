@@ -151,14 +151,19 @@ def _show_jupyter(h, orders, display, Math, HTML):
 
     # Ansatz
     base = _get_base_name(entries[0].symbol)
+    gauge_seq = getattr(h, '_gauge', None)
 
-    def _eps_prefix(k):
+    def _gauge_prefix_latex(k):
+        if gauge_seq is not None:
+            from asymptotics.gauge import gauge_term_latex
+            g = gauge_term_latex(gauge_seq[k], h.small_param)
+            return "" if g == "1" else g + r"\,"
         if k == 0:   return ""
         elif k == 1: return r"\varepsilon\,"
         else:        return r"\varepsilon^{%d}\," % k
 
     eps_terms = " + ".join(
-        _eps_prefix(k) + f"{base}_{{{k}}}"
+        _gauge_prefix_latex(k) + f"{base}_{{{k}}}"
         for k in range(len(entries))
     )
     display(Math(
@@ -171,11 +176,17 @@ def _show_jupyter(h, orders, display, Math, HTML):
     # Each order
     for entry in entries:
         k = entry.order
-        eps_label = (
-            r"\varepsilon^{" + str(k) + "}"  if k > 1
-            else (r"\varepsilon"              if k == 1
-            else  r"\varepsilon^{0}")
-        )
+        if gauge_seq is not None:
+            from asymptotics.gauge import gauge_term_latex
+            eps_label = gauge_term_latex(gauge_seq[k], h.small_param)
+            if eps_label == "1":
+                eps_label = r"\varepsilon^{0}"
+        else:
+            eps_label = (
+                r"\varepsilon^{" + str(k) + "}"  if k > 1
+                else (r"\varepsilon"              if k == 1
+                else  r"\varepsilon^{0}")
+            )
         eq_latex  = _latex_eps(entry.equation, h.small_param)
         sol_latex = _latex_eps(Eq(entry.symbol, entry.solution), h.small_param)
 
@@ -255,12 +266,30 @@ def _show_text(h, orders):
     print("=" * width)
 
     base = _get_base_name(entries[0].symbol)
-    print(f"\nAnsatz: {base}(ε) = {base}₀ + ε·{base}₁ + ε²·{base}₂ + …\n")
+    gauge_seq = getattr(h, '_gauge', None)
+
+    def _g_unicode(k):
+        if gauge_seq is None:
+            prefixes = ['', 'ε·', 'ε²·', 'ε³·', 'ε⁴·', 'ε⁵·']
+            return prefixes[k] if k < len(prefixes) else f'ε^{k}·'
+        from asymptotics.gauge import gauge_term_unicode
+        g = gauge_term_unicode(gauge_seq[k], h.small_param)
+        return '' if g == '1' else g + '·'
+
+    def _g_label(k):
+        if gauge_seq is None:
+            sup = ['⁰','¹','²','³','⁴','⁵']
+            return f"O(ε{sup[k] if k < len(sup) else '^'+str(k)})"
+        from asymptotics.gauge import gauge_term_unicode
+        g = gauge_term_unicode(gauge_seq[k], h.small_param)
+        return f'O({g})'
+
+    ansatz_terms = ' + '.join(_g_unicode(k) + f'{base}_{k}' for k in range(len(entries)))
+    print(f'\nAnsatz: {base}(ε) = {ansatz_terms} + …\n')
 
     for entry in entries:
         k = entry.order
-        sup = ['⁰','¹','²','³','⁴','⁵']
-        label = f"O(ε{sup[k] if k < len(sup) else '^'+str(k)})"
+        label = _g_label(k)
         print(f"  {label}  equation : {pretty(entry.equation)}")
         print(f"  {label}  solution : {entry.symbol} = {pretty(entry.solution)}")
         if entry.note:

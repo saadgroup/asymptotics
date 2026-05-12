@@ -36,6 +36,7 @@ from asymptotics.core.exceptions import (
     NoHigherOrderSolutionError,
     OnlyComplexRootsError,
 )
+from asymptotics.gauge import parse_gauge, extract_coefficients, is_standard_gauge
 
 
 def _make_order_symbols(base_name: str, n: int) -> List[Symbol]:
@@ -47,6 +48,7 @@ def expand_regular_algebraic(
     problem: AlgebraicEquation,
     order: int = 3,
     root_index: int = 0,
+    gauge=None,
 ) -> OrderHierarchy:
     """
     Apply regular perturbation theory to an algebraic problem.
@@ -100,38 +102,84 @@ def expand_regular_algebraic(
     x_syms = _make_order_symbols(str(x), N)
 
     # ------------------------------------------------------------------
-    # Step 2: build ansatz as a polynomial in eps
+    # Step 1b: build gauge sequence
     # ------------------------------------------------------------------
-    x_ans = sum(eps**k * x_syms[k] for k in range(N + 1))
+    gauge_seq = parse_gauge(gauge, N, eps)
+    h._gauge  = gauge_seq           # stored for display
 
     # ------------------------------------------------------------------
-    # Step 3: substitute ansatz into f and series-expand in eps
+    # Step 2: build ansatz as a sum over gauge functions
+    #   x(ε) = x_0·δ_0(ε) + x_1·δ_1(ε) + ... + x_N·δ_N(ε)
+    # ------------------------------------------------------------------
+    x_ans = sum(x_syms[k] * gauge_seq[k] for k in range(N + 1))
+
+    # ------------------------------------------------------------------
+    # Step 3: substitute ansatz into f and expand
     # ------------------------------------------------------------------
     f_substituted = f.subs(x, x_ans)
-    f_series      = series(f_substituted, eps, 0, N + 1)
+    f_expanded    = expand(f_substituted)
 
     h.substituted_equation = f_substituted
 
     # ------------------------------------------------------------------
-    # Step 4: collect coefficients by power of eps
+    # Step 4: collect coefficients by gauge function
+    #   Use sequential limit extraction (works for power-law AND log gauges)
     # ------------------------------------------------------------------
-    coeff = {}
-    for k in range(N + 1):
-        coeff[k] = f_series.coeff(eps, k)
+    coeff_list = extract_coefficients(f_expanded, gauge_seq, eps)
+    coeff      = {k: coeff_list[k] for k in range(N + 1)}
     h.collected = coeff
 
     # ------------------------------------------------------------------
     # Step 5: solve order by order
+    #
+    # With non-standard gauges the coefficient equations may not contain
+    # x_k — instead they constrain an earlier x_j that first appears at
+    # this order.  We use a deferred-solve strategy:
+    #
+    #   At order k: substitute known values, find the lowest-index
+    #   undetermined symbol present in the equation, solve for it.
+    #   Skip if equation is identically 0 (gauge order not present).
     # ------------------------------------------------------------------
-    known = {}
+    known = {}      # x_sym -> value (built up incrementally)
 
     for k in range(N + 1):
         eq_expr  = expand(coeff[k].subs(known))
         equation = Eq(eq_expr, 0)
 
-        # Solve for x_k
+        # Trivially satisfied — this gauge order contributes no constraint.
+        # Don't add a display entry; the symbol will be determined at a
+        # later order and back-filled there.
+        if eq_expr == Integer(0):
+            continue
+
+        # Find the lowest-index undetermined symbol present in eq_expr.
+        # In a standard gauge this is always x_syms[k]; with non-standard
+        # gauges it may be an earlier x_syms[j] that first becomes
+        # constrained at this order.
+        undetermined = [s for s in x_syms if s not in known]
+        target = None
+        for s in undetermined:
+            if s in eq_expr.free_symbols:
+                target = s
+                break
+
+        if target is None:
+            # No undetermined symbol — check the equation is satisfiable
+            if eq_expr != Integer(0):
+                raise NoHigherOrderSolutionError(k, x_syms[k], eq_expr, known)
+            entry = OrderEntry(
+                order    = k,
+                equation = equation,
+                solution = Integer(0),
+                symbol   = x_syms[k],
+                note     = "trivially satisfied",
+            )
+            h.entries.append(entry)
+            continue
+
+        # Solve for target
         try:
-            sols = solve(eq_expr, x_syms[k])
+            sols = solve(eq_expr, target)
         except NotImplementedError:
             sols = []
 
@@ -139,20 +187,21 @@ def expand_regular_algebraic(
         # Check 2: no solution found
         # ------------------------------------------------------------------
         if not sols:
-            if k == 0:
+            if k == 0 or target == x_syms[0]:
                 raise NoLeadingOrderSolutionError(eq_expr, eps, x)
             else:
-                raise NoHigherOrderSolutionError(k, x_syms[k], eq_expr, known)
+                raise NoHigherOrderSolutionError(k, target, eq_expr, known)
 
         # ------------------------------------------------------------------
-        # Root selection at leading order
+        # Root selection — applied when solving for the leading unknown x_0
+        # (which may happen at order k>0 with non-standard gauges).
         # ------------------------------------------------------------------
-        if k == 0:
+        if target == x_syms[0]:
             if problem.root_hint is not None:
-                hint      = sympify(problem.root_hint)
-                real_sols = [s for s in sols if s.is_real]
-                target    = real_sols if real_sols else sols
-                x_k_val   = min(target, key=lambda s: abs(complex(s - hint)))
+                hint         = sympify(problem.root_hint)
+                real_sols_h  = [s for s in sols if s.is_real]
+                target_list  = real_sols_h if real_sols_h else sols
+                x_k_val      = min(target_list, key=lambda s: abs(complex(s - hint)))
             else:
                 # is_real returns True (real), False (complex), or None (unknown)
                 # None happens when symbolic parameters are present.
@@ -203,10 +252,10 @@ def expand_regular_algebraic(
             x_k_val = sols[0]
 
         x_k_val = simplify(x_k_val)
-        known[x_syms[k]] = x_k_val
+        known[target] = x_k_val
 
         note = ""
-        if k == 0 and len(sols) > 1:
+        if target == x_syms[0] and len(sols) > 1:
             others         = [s for s in sols if s != x_k_val]
             real_others    = [s for s in others if s.is_real]
             complex_others = [s for s in others if not s.is_real]
@@ -221,7 +270,7 @@ def expand_regular_algebraic(
             order    = k,
             equation = equation,
             solution = x_k_val,
-            symbol   = x_syms[k],
+            symbol   = target,
             note     = note,
         )
         h.entries.append(entry)
@@ -229,7 +278,8 @@ def expand_regular_algebraic(
     # ------------------------------------------------------------------
     # Step 6: assemble composite expansion
     # ------------------------------------------------------------------
-    composite_terms = [known[x_syms[k]] * eps**k for k in range(N + 1)]
+    from sympy import Integer as _Int
+    composite_terms = [known.get(x_syms[k], _Int(0)) * gauge_seq[k] for k in range(N + 1)]
     h.composite = Add(*composite_terms)
 
     h._problem = problem
