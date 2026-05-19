@@ -167,8 +167,8 @@ class ODESystemHierarchy:
         Parameters
         ----------
         eps : float
-        problem : ODESystem — the original problem object (required)
-        t_range : [a, b]
+        problem : ODESystem — the original problem object (optional, inferred automatically)
+        plot_range : [a, b]
         n_points : int
 
         Returns
@@ -177,7 +177,7 @@ class ODESystemHierarchy:
         """
         from asymptotics.numerics import compare_numeric
         problem = getattr(self, '_problem', None)
-        return compare_numeric(self, eps, params=params, **kwargs)
+        return compare_numeric(self, eps, params=params, problem=problem, **kwargs)
 
 
 # ---------------------------------------------------------------------------

@@ -91,7 +91,7 @@ class MultScalesHierarchy:
             The original problem object. Defaults to the equation
             used to create this hierarchy — usually not needed.
         **kwargs
-            t_range   : [a, b]  — domain for plotting (ODE only)
+            plot_range : [a, b]  — domain for plotting (ODE only)
             n_points  : int     — number of plot points (default 300)
 
         Returns
@@ -105,7 +105,7 @@ class MultScalesHierarchy:
         """
         from asymptotics.numerics import compare_numeric
         problem = getattr(self, '_problem', None)
-        return compare_numeric(self, eps, params=params, **kwargs)
+        return compare_numeric(self, eps, params=params, problem=problem, **kwargs)
 
 
     def to_latex(self, environment='align', show_orders=False, filename=None):

@@ -16,7 +16,7 @@ from sympy import Symbol, symbols, lambdify, solve, Integer, sympify
 # Dispatcher — called by sol.compare_numeric()
 # ---------------------------------------------------------------------------
 
-def compare_numeric(hierarchy, eps, params=None, **kwargs):
+def compare_numeric(hierarchy, eps, params=None, filename=None, **kwargs):
     """
     Compare a perturbation expansion against a numerical solution.
 
@@ -25,6 +25,9 @@ def compare_numeric(hierarchy, eps, params=None, **kwargs):
     hierarchy : any perturbation hierarchy object
     eps : float
         Value of the small parameter to use.
+    filename : str, optional
+        If given, save the figure to this path (e.g. 'result.pdf', 'result.png').
+        Uses bbox_inches='tight' automatically.
     **kwargs
         plot_range : [a, b] — domain for plotting (ODE only)
         n_points   : int — number of plot points (default 300)
@@ -33,17 +36,6 @@ def compare_numeric(hierarchy, eps, params=None, **kwargs):
     -------
     dict with keys depending on problem type (see individual solvers)
     """
-    # Handle legacy/alias kwargs gracefully
-    for alias in ('t_range', 'x_range'):
-        if alias in kwargs:
-            import warnings
-            warnings.warn(
-                f"'{alias}' is not a valid parameter — use 'plot_range' instead.",
-                UserWarning, stacklevel=2
-            )
-            kwargs.setdefault('plot_range', kwargs.pop(alias))
-            break
-
     # Normalize eps: scalar -> single-element list, list -> list
     if not hasattr(eps, '__iter__'):
         eps_list = [float(eps)]
@@ -83,23 +75,28 @@ def compare_numeric(hierarchy, eps, params=None, **kwargs):
     from asymptotics.core.system_hierarchy import SystemHierarchy
     from asymptotics.methods.stepwise import StepwiseHierarchy
     if isinstance(hierarchy, StepwiseHierarchy):
-        return _compare_ode(hierarchy, eps_list, **kwargs)
-    if isinstance(hierarchy, SystemHierarchy):
-        return _compare_algebraic_system(hierarchy, eps_list, **kwargs)
+        result = _compare_ode(hierarchy, eps_list, **kwargs)
+    elif isinstance(hierarchy, SystemHierarchy):
+        result = _compare_algebraic_system(hierarchy, eps_list, **kwargs)
     elif isinstance(hierarchy, ODESystemHierarchy):
-        return _compare_ode_system(hierarchy, eps_list, **kwargs)
+        result = _compare_ode_system(hierarchy, eps_list, **kwargs)
     elif isinstance(hierarchy, BoundaryLayerHierarchy):
-        return _compare_boundary_layer(hierarchy, eps_list, **kwargs)
+        result = _compare_boundary_layer(hierarchy, eps_list, **kwargs)
     elif isinstance(hierarchy, ODEHierarchy):
-        return _compare_ode(hierarchy, eps_list, **kwargs)
+        result = _compare_ode(hierarchy, eps_list, **kwargs)
     elif isinstance(hierarchy, (LindstedtHierarchy, MultScalesHierarchy)):
-        return _compare_ode_oscillator(hierarchy, eps_list, **kwargs)
+        result = _compare_ode_oscillator(hierarchy, eps_list, **kwargs)
     elif isinstance(hierarchy, OrderHierarchy):
-        return _compare_algebraic(hierarchy, eps_list, **kwargs)
+        result = _compare_algebraic(hierarchy, eps_list, **kwargs)
     else:
         raise TypeError(
             f"\n\n  compare_numeric does not support {type(hierarchy).__name__}.\n"
         )
+
+    if filename is not None and 'fig' in result:
+        result['fig'].savefig(filename, bbox_inches='tight')
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +139,7 @@ def _compare_algebraic(h, eps_list, n_points=100, problem=None, **kwargs):
             num_vals.append(float('nan'))
     num_vals = np.array(num_vals)
 
-    fig, ax = plt.subplots(figsize=(8, 4))
+    fig, ax = plt.subplots(figsize=(5, 4))
     ax.plot(eps_vals, num_vals,  'k-',   lw=2,   label='Exact (fsolve)', alpha=0.9)
     ax.plot(eps_vals, pert_vals, 'ro--', lw=1.5, ms=5, markevery=max(1, len(eps_vals)//10),
             label=f'Perturbation (order {len(h)-1})')
@@ -191,7 +188,7 @@ def _compare_ode(h, eps_list, plot_range=None, n_points=300, problem=None, **kwa
     t_vals = np.linspace(plot_range[0], plot_range[1], n_points)
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
-    fig, ax    = plt.subplots(figsize=(10, 4))
+    fig, ax    = plt.subplots(figsize=(5, 4))
     u_pert_all = {}
     u_num_all  = {}
 
@@ -284,7 +281,7 @@ def _compare_ode_oscillator(h, eps_list, plot_range=None, n_points=500,
     t_vals = np.linspace(plot_range[0], plot_range[1], n_points)
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
-    fig, ax    = plt.subplots(figsize=(10, 4))
+    fig, ax    = plt.subplots(figsize=(5, 4))
     u_pert_all = {}
     u_num_all  = {}
 
@@ -347,7 +344,7 @@ def _compare_boundary_layer(h, eps_list, n_points=400, problem=None, **kwargs):
     x_vals     = np.linspace(0, 1, n_points)
 
     n_eps = len(eps_list)
-    fig, axes = plt.subplots(1, n_eps, figsize=(6*n_eps, 4), squeeze=False)
+    fig, axes = plt.subplots(1, n_eps, figsize=(5*n_eps, 4), squeeze=False)
 
     results = {ev: {} for ev in eps_list}
 
