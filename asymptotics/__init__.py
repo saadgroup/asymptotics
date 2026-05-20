@@ -71,9 +71,10 @@ sol[k].secular               — True if secular terms detected (ODE only)
 sol.composite                — assembled SymPy expansion
 
 Lindstedt extras: sol.omega_0, sol.omega_expansion, sol.composite_t,
-                  sol[k].omega_k_val, sol[k].secularity_condition
+                  sol[k].omega_k_val, sol[k].omega_k_sym, sol[k].secularity_condition
 Multiple-scales extras: sol.T0, sol.T1, sol.amplitude_A, sol.amplitude_B,
-                        sol[k].solvability_A
+                        sol[k].solvability_A, sol[k].solvability_B,
+                        sol[k].pde  (underlying PDE; sol[k].ode is an alias)
 
 Step-by-step API (StepwiseHierarchy)
 --------------------------------------
@@ -149,7 +150,7 @@ from asymptotics.methods.regular_algebraic import expand_regular_algebraic as ex
 # ---------------------------------------------------------------------------
 # Version
 # ---------------------------------------------------------------------------
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     # Problem classes

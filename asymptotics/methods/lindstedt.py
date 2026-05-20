@@ -181,6 +181,20 @@ class LindstedtOrderEntry:
         self.symbol               = symbol
         self.solution             = particular_solution   # alias
 
+    @property
+    def secular(self):
+        """True if secular (resonant) terms were detected and eliminated at
+        this order.  For Lindstedt the secularity condition is always enforced,
+        so this is True whenever ``secularity_condition`` is non-trivial."""
+        from sympy import S
+        sc = self.secularity_condition
+        if sc is None:
+            return False
+        try:
+            return bool(sc != S.Zero)
+        except Exception:
+            return False
+
 
 # ---------------------------------------------------------------------------
 # Helpers

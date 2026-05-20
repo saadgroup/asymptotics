@@ -181,7 +181,7 @@ class MultScalesOrderEntry:
                  solvability_A, solvability_B,
                  particular_solution, symbol):
         self.order              = order
-        self.pde                = pde                # PDE for u_k
+        self.pde                = pde                # PDE for u_k (T0, T1)
         self.secular_cos        = secular_cos        # coeff of cos(omega0*T0)
         self.secular_sin        = secular_sin        # coeff of sin(omega0*T0)
         self.solvability_A      = solvability_A      # Eq(dA/dT1, ...)
@@ -189,6 +189,24 @@ class MultScalesOrderEntry:
         self.particular_solution = particular_solution
         self.symbol             = symbol
         self.solution           = particular_solution  # alias
+
+    # ------------------------------------------------------------------
+    # Uniform API aliases — keep the public interface consistent with all
+    # other hierarchy types even though the equation is technically a PDE.
+    # ------------------------------------------------------------------
+
+    @property
+    def ode(self):
+        """Alias for ``pde``: the equation at this order in (T0, T1)-space.
+        Exposed as ``ode`` to match the uniform ``sol[k].ode`` interface."""
+        return self.pde
+
+    @property
+    def secular(self):
+        """True if resonant (secular) terms were present at this order.
+        Computed from ``secular_cos`` and ``secular_sin``."""
+        from sympy import S
+        return (self.secular_cos != S.Zero or self.secular_sin != S.Zero)
 
 
 # ---------------------------------------------------------------------------
