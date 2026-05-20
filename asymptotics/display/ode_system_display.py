@@ -86,16 +86,29 @@ def _show_jupyter(h, display, Math, HTML):
                 + " = " + _lx(entry.particular_solution, eps)
             ))
 
-    # Composites
+    # Composites — build term-by-term low-to-high to match show_ode ordering
     display(HTML(
         "<div style='margin-top:12px;font-weight:600;'>Composite expansions:</div>"
     ))
     for var in h.variables:
-        comp = h.hierarchies[var].composite
-        remainder = r"\mathcal{O}\!\left(\varepsilon^{%d}\right)" % (N + 1)
+        pieces = []
+        for k in range(N + 1):
+            entry = h.hierarchies[var][k]
+            val   = entry.particular_solution
+            if val == 0:
+                continue
+            val_latex = _lx(val, eps)
+            if k == 0:
+                term = val_latex
+            elif k == 1:
+                term = r"\varepsilon \left(" + val_latex + r"\right)"
+            else:
+                term = r"\varepsilon^{%d} \left(" % k + val_latex + r"\right)"
+            pieces.append(term)
+        rhs       = " + ".join(pieces) if pieces else "0"
+        remainder = r"+ \,\mathcal{O}\!\left(\varepsilon^{%d}\right)" % (N + 1)
         display(Math(
-            r"\boxed{" + var + r"(t,\varepsilon) = "
-            + _lx(comp, eps) + r" + " + remainder + r"}"
+            r"\boxed{" + var + r"(t,\varepsilon) = " + rhs + " " + remainder + r"}"
         ))
 
 
@@ -130,5 +143,20 @@ def _show_text(h):
     print("-" * width)
     print("  Composites:")
     for var in h.variables:
-        print(f"    {var}(t,ε) = {h.hierarchies[var].composite}")
+        pieces = []
+        for k in range(N + 1):
+            entry = h.hierarchies[var][k]
+            val   = entry.particular_solution
+            if val == 0:
+                continue
+            val_str = str(val)
+            if k == 0:
+                term = val_str
+            elif k == 1:
+                term = f"ε·({val_str})"
+            else:
+                term = f"ε{sup[k] if k < len(sup) else '^'+str(k)}·({val_str})"
+            pieces.append(term)
+        rhs = " + ".join(pieces) if pieces else "0"
+        print(f"    {var}(t,ε) = {rhs} + …")
     print("=" * width)

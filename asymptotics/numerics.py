@@ -431,6 +431,14 @@ def _compare_ode_system(h, eps_list, plot_range=None, n_points=300,
     u_pert_all = {ev: {} for ev in eps_list}
     u_num_all  = {ev: {} for ev in eps_list}
 
+    # Compute the starting index of each variable in the flat state vector
+    # State layout: [u, du, ..., v, dv, ...] — order entries per variable
+    state_start = {}
+    _idx = 0
+    for _var in variables:
+        state_start[_var] = _idx
+        _idx += problem.ode_orders[_var]
+
     for i, eps_val in enumerate(eps_list):
         color  = colors[i % len(colors)]
         rhs_fn = _build_system_rhs(problem, eps_val)
@@ -447,7 +455,7 @@ def _compare_ode_system(h, eps_list, plot_range=None, n_points=300,
                 u_pert = np.real(np.array([complex(fn(ti)) for ti in t_vals]))
             except Exception:
                 u_pert = np.array([float(fn(ti)) for ti in t_vals])
-            u_num = sol.sol(t_vals)[j]
+            u_num = sol.sol(t_vals)[state_start[var]]
 
             ax.plot(t_vals, u_num,  '-',  color=color, lw=2,   alpha=0.85,
                     label=f'Exact  ε={eps_val}' if j==0 else f'ε={eps_val}')
@@ -517,8 +525,8 @@ def _build_system_rhs(problem, eps_val):
             indices = state_map[dep]
             subs[dep_syms[dep]] = y[indices[0]]
             for k_deriv, dsym in problem._deriv_syms[dep].items():
-                if k_deriv - 1 < len(indices):
-                    subs[dsym] = y[indices[k_deriv - 1]]
+                if k_deriv < len(indices):
+                    subs[dsym] = y[indices[k_deriv]]
 
         result = []
         for dep in deps:
