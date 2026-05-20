@@ -109,7 +109,7 @@ def _compare_algebraic(h, eps_list, n_points=100, problem=None, **kwargs):
     eps_list is used as the x-axis: plot x(eps) vs exact root over eps_list.
     """
     import matplotlib.pyplot as plt
-    from scipy.optimize import fsolve
+    from scipy.optimize import root
 
     eps_sym = h.small_param
 
@@ -134,13 +134,14 @@ def _compare_algebraic(h, eps_list, n_points=100, problem=None, **kwargs):
     for j, ev in enumerate(eps_vals):
         f_fn = lambdify(x_sym, f_orig.subs(eps_sym, ev).subs(kwargs.get('param_subs', {})), 'numpy')
         try:
-            num_vals.append(float(fsolve(f_fn, pert_vals[j])[0]))
+            sol = root(f_fn, pert_vals[j])
+            num_vals.append(float(sol.x[0]) if sol.success else float('nan'))
         except Exception:
             num_vals.append(float('nan'))
     num_vals = np.array(num_vals)
 
     fig, ax = plt.subplots(figsize=(5, 4))
-    ax.plot(eps_vals, num_vals,  'k-',   lw=2,   label='Exact (fsolve)', alpha=0.9)
+    ax.plot(eps_vals, num_vals,  'k-',   lw=2,   label='Exact (root)', alpha=0.9)
     ax.plot(eps_vals, pert_vals, 'ro--', lw=1.5, ms=5, markevery=max(1, len(eps_vals)//10),
             label=f'Perturbation (order {len(h)-1})')
     ax.set_xlabel('ε')
@@ -558,7 +559,6 @@ def _compare_algebraic_system(h, eps_list, problem=None, **kwargs):
     Plots each variable vs exact root over eps range.
     """
     import matplotlib.pyplot as plt
-    from scipy.optimize import fsolve
 
     eps_sym   = h.small_param
     variables = list(h.hierarchies.keys())
