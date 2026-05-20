@@ -6,10 +6,11 @@
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org)
 [![SymPy](https://img.shields.io/badge/built%20on-SymPy-green)](https://www.sympy.org)
-[![Tests](https://img.shields.io/badge/tests-164%20passing-brightgreen)](/)
+[![Tests](https://img.shields.io/badge/tests-195%20passing-brightgreen)](/asymptotics/tests)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-*Write your perturbation problem as a string. Get symbolic results, LaTeX display, and numerical verification — automatically.*
+*Write your perturbation problem as a string. Get symbolic order-by-order results,  
+LaTeX display, numerical verification, and direct evaluation — automatically.*
 
 </div>
 
@@ -17,7 +18,10 @@
 
 ## What is asymptotics?
 
-`asymptotics` is a Python library that automates classical perturbation methods for algebraic equations and ODEs. Instead of manually deriving order-by-order equations, substituting ansätze, and solving each level — you write your problem as a plain string and call a method:
+`asymptotics` is a Python library that automates classical perturbation methods for
+algebraic equations and ordinary differential equations (ODEs). Instead of manually
+deriving order-by-order equations, substituting ansätze, and solving each level —
+you write your problem as a plain string and call a method:
 
 ```python
 from asymptotics import ODE
@@ -26,10 +30,16 @@ eq  = ODE("u'' + u + eps*u**3", small_param="eps",
           conditions=["u(0) = 1", "u'(0) = 0"])
 
 sol = eq.expand_lindstedt(order=2)
-sol.show()   # Beautiful LaTeX in Jupyter
+sol.show()       # beautiful LaTeX in Jupyter; clean text in terminal
 ```
 
-The library handles the rest: symbolic expansion, secular term elimination, condition application, and optional numerical comparison.
+The library handles the rest: symbolic expansion, secular term elimination,
+condition application, and optional numerical comparison against SciPy.
+
+Unlike black-box tools (Mathematica's `AsymptoticDSolveValue`), `asymptotics`
+exposes every intermediate step — each order's ODE, its general and particular
+solution, secular terms, frequency corrections — as live SymPy expressions you
+can inspect and manipulate.
 
 ---
 
@@ -39,39 +49,43 @@ The library handles the rest: symbolic expansion, secular term elimination, cond
 pip install asymptotics
 ```
 
-Or for local development with notebooks:
+For local development with example notebooks:
 
 ```bash
-git clone https://github.com/your-username/asymptotics
+git clone https://github.com/saadgroup/asymptotics
 cd asymptotics
 pip install -e ".[dev,notebook]"
 ```
 
-**Requirements:** Python ≥ 3.10 · SymPy ≥ 1.12 · NumPy · SciPy · Matplotlib
+**Requirements:** Python ≥ 3.10 · SymPy ≥ 1.12 · NumPy ≥ 1.24 · SciPy · Matplotlib
 
 ---
 
 ## Methods at a glance
 
-| Class | Method | Use when... |
-|:------|:-------|:------------|
-| `AlgebraicEquation` | `.expand_regular(order)` | Nonlinear algebraic equation $f(x, \varepsilon) = 0$ |
+| Class | Method | Use when… |
+|:------|:-------|:----------|
+| `AlgebraicEquation` | `.expand_regular(order)` | Nonlinear algebraic equation $f(x,\varepsilon)=0$ |
 | `AlgebraicSystem` | `.expand_regular(order)` | Coupled algebraic system |
-| `ODE` | `.expand_regular(order)` | ODE with small nonlinear term (IVP or BVP) |
-| `ODE` | `.expand_lindstedt(order)` | Nonlinear oscillator — removes secular terms by straining time |
+| `ODE` | `.expand_regular(order)` | ODE with small nonlinear/forcing term (IVP or BVP) |
+| `ODE` | `.expand_lindstedt(order)` | Nonlinear oscillator — strains time to remove secular terms |
 | `ODE` | `.expand_multiple_scales(order)` | Oscillator with slow amplitude/phase modulation |
 | `ODE` | `.expand_boundary_layer()` | Singular BVP — $\varepsilon$ multiplies highest derivative |
+| `ODE` | `.begin_expansion(order)` | Step-by-step control when SymPy cannot solve a leading order |
 | `ODESystem` | `.expand_regular(order)` | Coupled system of ODEs |
 
-Every result supports:
-- `sol.show()` — LaTeX display in Jupyter, plain text in terminal
-- `sol.to_latex()` — export results as LaTeX source for papers
-- `sol.compare_numeric(eps, problem=eq)` — numerical verification + plot
-- `sol[k].particular_solution` — symbolic result at order $k$
+Every result supports a consistent four-method API:
+
+| Method | What it does |
+|:-------|:-------------|
+| `sol.show()` | LaTeX display in Jupyter; plain text in terminal |
+| `sol.eval(eps, at=...)` | Evaluate composite as a NumPy array |
+| `sol.compare_numeric(eps)` | Numerical verification plot via SciPy |
+| `sol.to_latex(...)` | Export ready-to-paste LaTeX source |
 
 ---
 
-## Examples
+## Quick examples
 
 ### Algebraic equation
 
@@ -81,10 +95,15 @@ from asymptotics import AlgebraicEquation
 eq  = AlgebraicEquation("x**3 + eps*x - 1", dependent="x", small_param="eps")
 sol = eq.expand_regular(order=3)
 sol.show()
+# x(ε) = 1 - ε/3 - ε³/81 + O(ε⁴)
 
-sol[0].solution   # x₀ = 1
-sol[1].solution   # x₁ = -1/3
-sol.composite     # 1 - ε/3 - ε³/81 + O(ε⁴)
+sol[0].solution    # x₀ = 1
+sol[1].solution    # x₁ = -1/3
+sol.composite      # full SymPy expression
+
+sol.eval(eps=0.1)                          # float
+sol.eval(eps=[0.1, 0.2, 0.3])             # ndarray
+sol.compare_numeric(eps=0.3)              # plot vs scipy.fsolve
 ```
 
 ### Coupled algebraic system
@@ -100,8 +119,8 @@ sys = AlgebraicSystem(
 sol = sys.expand_regular(order=3)
 sol.show()
 
-sol["x"].composite   # full expansion for x(ε)
-sol["y"].composite   # full expansion for y(ε)
+sol["x"].composite   # expansion for x(ε)
+sol["y"].composite   # expansion for y(ε)
 ```
 
 ### Regular perturbation — IVP
@@ -109,7 +128,7 @@ sol["y"].composite   # full expansion for y(ε)
 ```python
 from asymptotics import ODE
 
-# dependent='u' and independent='t' are inferred from the conditions
+# dependent='u' and independent='t' inferred automatically from conditions
 eq = ODE(
     "u'' + u + eps*u**3",
     small_param = "eps",
@@ -118,8 +137,7 @@ eq = ODE(
 sol = eq.expand_regular(order=2)
 sol.show()
 
-# Secular terms detected and flagged — use Lindstedt or multiple scales instead
-sol[1].secular   # True — Duffing oscillator has secular terms at O(ε)
+sol[1].secular   # True — secular terms detected; use Lindstedt or multiple scales
 ```
 
 ### Regular perturbation — BVP
@@ -150,13 +168,18 @@ eq = ODE(
 sol = eq.expand_lindstedt(order=2)
 sol.show()
 
-sol.omega_0          # ω₀ = 1   (auto-detected from unperturbed equation)
-sol.omega_expansion  # ω(ε) = 1 + 3ε/8 - 21ε²/256
-sol[1].omega_k_val   # ω₁ = 3/8
-sol.composite_t      # u(t, ε) — uniformly valid for large t
+sol.omega_0           # ω₀ = 1   (auto-detected from unperturbed equation)
+sol.omega_expansion   # ω(ε) = 1 + 3ε/8 - 21ε²/256
+sol[1].omega_k_val    # ω₁ = 3/8  (classical result)
+sol.composite_t       # u(t, ε) — uniformly valid in physical time t
+
+import numpy as np
+t_vals = np.linspace(0, 40, 500)
+sol.eval(eps=0.1, at=t_vals)        # ndarray
+sol.compare_numeric(eps=0.1)        # plot vs scipy.solve_ivp
 ```
 
-Works for any natural frequency — detected automatically:
+Works for any natural frequency — detected automatically from the unperturbed equation:
 
 ```python
 eq = ODE("u'' + 4*u + eps*u**3", small_param="eps",
@@ -167,7 +190,7 @@ sol.omega_0   # 2 — detected from u'' + 4u = 0
 
 ### Multiple scales
 
-For problems where amplitude or phase evolve slowly — e.g. weakly damped oscillators or limit cycles.
+For problems where amplitude or phase evolve slowly.
 
 ```python
 # Weakly damped oscillator
@@ -179,8 +202,8 @@ eq = ODE(
 sol = eq.expand_multiple_scales(order=1)
 sol.show()
 
-sol.amplitude_A   # A(T₁) = e^{-T₁/2}  — solved exactly by dsolve
-sol.composite_t   # e^{-εt/2} · cos(t)  — matches exact solution at leading order
+sol.amplitude_A   # A(T₁) = e^{-T₁/2}  — exact Bernoulli solution
+sol.composite_t   # e^{-εt/2} · cos(t)  — matches exact result at O(1)
 ```
 
 ```python
@@ -191,7 +214,7 @@ eq = ODE(
     conditions  = ["u(0) = 1", "u'(0) = 0"],
 )
 sol = eq.expand_multiple_scales(order=1)
-sol.amplitude_A   # 2√(eᵀ¹/(eᵀ¹+3))  → 2 as T₁→∞  (Bernoulli ODE, solved exactly)
+sol.amplitude_A   # 2√(eᵀ¹/(eᵀ¹+3))  →  2  as T₁→∞  (limit cycle)
 ```
 
 ### Boundary layers
@@ -201,7 +224,7 @@ The layer location is detected automatically from the sign of $p(x)$.
 
 ```python
 eq = ODE(
-    "eps*u'' + u' + u",    # p(0)=1 > 0  →  layer at x=0
+    "eps*u'' + u' + u",   # p(0) = 1 > 0  →  layer at x = 0
     small_param = "eps",
     conditions  = ["u(0) = 0", "u(1) = 1"],
 )
@@ -212,13 +235,15 @@ sol.layer_location   # 'x = 0'
 sol.outer            # outer solution (away from layer)
 sol.inner            # inner solution U(ξ) in stretched coord ξ = x/ε
 sol.composite        # u_out + u_in − u_match  (Van Dyke rule)
+
+sol.compare_numeric(eps=0.05)
 ```
 
 Variable coefficients are fully supported:
 
 ```python
 eq = ODE(
-    "eps*u'' + (1+x)*u' - u",   # p(0)=1 > 0  →  layer at x=0
+    "eps*u'' + (1 + x)*u' - u",
     small_param = "eps",
     conditions  = ["u(0) = 1", "u(1) = 2"],
 )
@@ -239,169 +264,316 @@ sys = ODESystem(
 sol = sys.expand_regular(order=2)
 sol.show()
 
-sol["u"].composite          # full expansion for u(t, ε)
-sol["v"].composite          # full expansion for v(t, ε)
-sol["u"][1].particular_solution   # u₁(t)
+sol["u"].composite              # full expansion for u(t, ε)
+sol["v"].composite              # full expansion for v(t, ε)
+sol["u"][1].particular_solution # u₁(t)
+
+import numpy as np
+t_vals = np.linspace(0, 10, 200)
+sol.eval(eps=0.1, at=t_vals)    # {'u': ndarray, 'v': ndarray}
+sol.compare_numeric(eps=0.1)
 ```
 
-Works for any number of equations — 2, 3, or more.
+Works for any number of coupled equations.
 
-### Numerical comparison
+---
 
-Every hierarchy includes `.compare_numeric()` for validation:
+## Step-by-step API
+
+When SymPy cannot solve a leading-order equation (e.g. a nonlinear ODE at O(1)),
+`begin_expansion()` gives you full manual control while letting the library handle
+all linear higher-order equations automatically.
 
 ```python
-sol = eq.expand_lindstedt(order=2)
-result = sol.compare_numeric(eps=0.1, problem=eq)
+sol = eq.begin_expansion(order=2)
 
-result['fig']           # matplotlib Figure
-result['t']             # evaluation points
-result['u_pert']        # perturbation composite
-result['u_numerical']   # exact numerical solution (scipy)
+# Inspect all equations immediately — nothing is solved yet
+sol.show()
+
+# Examine order-k ODE
+sol[0].ode    # O(1) equation — purely symbolic
+sol[1].ode    # O(ε) equation — symbolic if O(1) unsolved;
+              #                  fully substituted if O(1) is solved
+
+# Solve or provide solutions
+sol[0].solve()                      # try SymPy — fails gracefully with clear message
+sol[0].set_solution("4*eta*(1-eta)") # provide expression as string or SymPy expr
+sol[1].solve()                      # SymPy handles linear higher orders
+sol.solve_all()                     # attempt all remaining
+
+# Inspect state
+sol[k].is_solved                    # bool
+sol[k].particular_solution          # SymPy expression (if solved)
+sol[k].general_solution             # SymPy expression (if solved)
+sol.n_solved                        # number of solved orders
+sol.n_pending                       # number of unsolved orders
+
+# Full standard API once all orders are solved
+sol.composite
+sol.show()
+sol.to_latex()
+sol.eval(eps=0.1, at=t_vals)
+sol.compare_numeric(eps=0.1)
 ```
 
-The plot range is inferred automatically from the problem's conditions —
-a BVP with `u(0)=0, u(2)=1` will plot over `[0, 2]` without any extra arguments.
-Override explicitly with `plot_range=[0, 20]`.
+If `composite`, `eval`, `compare_numeric`, or `to_latex` is called before all
+orders are solved, a clear `NotReadyError` lists exactly which orders are pending.
 
-For boundary layers, all three pieces are shown and returned:
+---
 
-```python
-result['u_outer']       # outer solution
-result['u_inner']       # inner solution
-result['u_composite']   # composite
-```
+## Non-standard gauge sequences
 
-For coupled systems, results are dicts keyed by variable name:
+By default the ansatz uses the standard power sequence $\{1, \varepsilon, \varepsilon^2, \ldots\}$.
+You can supply a non-standard gauge when the problem calls for it:
 
 ```python
-result['u_pert']['u']   # perturbation for u
-result['u_pert']['v']   # perturbation for v
+# Half-power gauge: {1, √ε, ε, ε^(3/2), ...}
+sol = eq.expand_regular(order=3, gauge="sqrt(eps)")
+
+# Logarithmic gauge: {1, log(ε), log²(ε), ...}
+sol = eq.expand_regular(order=2, gauge=["1", "log(eps)", "log(eps)**2"])
+
+# Inspect the gauge used
+sol.gauge   # list of SymPy gauge functions
 ```
 
 ---
 
-## Export to LaTeX
+## Symbolic parameters
 
-Every hierarchy can export its results as ready-to-paste LaTeX source:
+Parameters other than the dependent variable, independent variable, and small
+parameter are detected automatically and a warning is issued:
 
 ```python
-sol = eq.expand_lindstedt(order=2)
+eq = ODE("u'' + a*u + eps*u**3", small_param="eps",
+         conditions=["u(0) = 1", "u'(0) = 0"])
+# ⚠️  symbolic parameters detected: {'a'}
 
-# Print to console
-sol.to_latex()
+# Parameters also work in conditions
+eq = ODE("u'' + u + eps*u**3", small_param="eps",
+         conditions=["u(0) = A", "u'(0) = 0"])
+# ⚠️  symbolic parameters detected: {'A'}
 
-# Save to file
-sol.to_latex(filename="duffing.tex")
+# show() and to_latex() always work — results stay symbolic
+sol.show()
 
-# Include individual orders (u_0, u_1, u_2, ...) in addition to composite
-sol.to_latex(show_orders=True)
+# Provide values at eval/compare time
+sol.eval(eps=0.1, at=t_vals, params={"a": 2.0, "A": 1.5})
+sol.compare_numeric(eps=0.1, params={"a": 2.0, "A": 1.5})
+# Missing params → clear error listing all required names
+```
 
-# Choose math environment
-sol.to_latex(environment='equation')   # default: 'align'
+---
+
+## The four core methods
+
+### `sol.show()`
+
+LaTeX rendering in Jupyter; clean plain text in the terminal.
+The small parameter is always displayed as $\varepsilon$, regardless of the name
+you chose (`eps`, `mu`, `delta`, …).
+
+```python
+sol.show()                   # full hierarchy
+sol.show(orders=[0, 1])      # selected orders only
+sol.show(mode='text')        # force plain text (useful in scripts)
+```
+
+### `sol.eval(eps, at=None, params=None)`
+
+Evaluate the composite expansion and return a NumPy array.
+
+```python
+import numpy as np
+t_vals = np.linspace(0, 20, 400)
+
+# ODE — single eps
+u = sol.eval(eps=0.1, at=t_vals)             # ndarray
+
+# ODE — multiple eps values
+u = sol.eval(eps=[0.1, 0.2], at=t_vals)      # dict {0.1: ndarray, 0.2: ndarray}
+
+# Algebraic
+x = sol.eval(eps=0.1)                        # float
+x = sol.eval(eps=[0.1, 0.2, 0.3])           # ndarray
+
+# ODESystem
+r = sol.eval(eps=0.1, at=t_vals)            # {'u': ndarray, 'v': ndarray}
+
+# With symbolic parameters
+sol.eval(eps=0.1, at=t_vals, params={"a": 2.0})
+```
+
+For Lindstedt and multiple scales, `composite_t` (solution in physical time $t$)
+is used automatically — no need to handle the strained-time symbol yourself.
+
+### `sol.compare_numeric(eps, params=None, plot_range=None, filename=None)`
+
+Generate a comparison plot between the perturbation expansion and a SciPy
+numerical reference solution.
+
+```python
+sol.compare_numeric(eps=0.1)
+sol.compare_numeric(eps=[0.1, 0.2, 0.3])           # overlay multiple eps
+sol.compare_numeric(eps=0.1, params={"a": 2.0})
+sol.compare_numeric(eps=0.1, plot_range=[0, 40])    # override default range
+sol.compare_numeric(eps=0.1, filename="fig.pdf")    # save to file
+```
+
+The plot range is inferred automatically from the problem's conditions.
+No `problem=` argument is required — the problem is stored on the hierarchy.
+
+Returns a `dict` with keys that depend on problem type:
+
+| Problem type | Keys |
+|:-------------|:-----|
+| All ODE methods | `'t'`, `'u_pert'`, `'u_numerical'`, `'fig'` |
+| Boundary layer | additionally `'u_outer'`, `'u_inner'`, `'u_composite'` |
+| ODE system | `'u_pert'` and `'u_numerical'` are dicts keyed by variable name |
+| Algebraic | `'eps'`, `'perturbation'`, `'numerical'`, `'fig'` |
+
+SciPy solvers used: `solve_ivp` (IVP, Lindstedt, multiple scales),
+`solve_bvp` (BVP, boundary layer), `fsolve` (algebraic).
+
+### `sol.to_latex(environment='align', show_orders=False, filename=None)`
+
+Export results as ready-to-paste LaTeX source. The small parameter is always
+rendered as `\varepsilon`.
+
+```python
+sol.to_latex()                              # print to console
+sol.to_latex(filename="result.tex")        # save to file
+sol.to_latex(show_orders=True)             # include u₀, u₁, u₂, … before composite
+sol.to_latex(environment='equation')       # default: 'align'
 sol.to_latex(environment='gather')
 ```
 
-Output for Lindstedt–Poincaré includes:
-- Frequency expansion $\omega(\varepsilon) = 1 + \frac{3}{8}\varepsilon + \cdots$
-- Composite solution in strained time $\tau$
-- Composite solution in physical time $t$
-
-Output for boundary layers includes outer, inner, and composite separately.
-The small parameter is always rendered as $\varepsilon$ regardless of what you named it.
+Lindstedt output includes the frequency expansion $\omega(\varepsilon)$,
+the composite in strained time $\tau$, and the composite in physical time $t$.
+Boundary layer output includes outer, inner, and composite separately.
 
 ---
 
-## Accessing intermediate steps
+## Inspecting intermediate steps
 
 Every hierarchy exposes the full symbolic work at each order:
 
 ```python
 sol = eq.expand_regular(order=3)
 
-sol[k].ode                   # the ODE at order k
+# Per-order entries
+sol[k].ode                   # the ODE/equation at order k
 sol[k].general_solution      # with free integration constants
-sol[k].particular_solution   # constants fixed by BCs/ICs
-sol[k].secular               # True if secular terms detected
+sol[k].particular_solution   # constants fixed by ICs/BCs
+sol[k].secular               # True if secular terms detected (ODE only)
 
-sol.composite                # full assembled expansion u(t, ε)
+# Assembly
+sol.composite                # assembled expansion u(t, ε) as SymPy expression
 sol.small_param              # the ε symbol
-sol._problem_type            # 'ivp' or 'bvp'
 ```
 
-Lindstedt-specific:
+Lindstedt-specific attributes:
 
 ```python
-sol.omega_0                  # unperturbed frequency
-sol.omega_expansion          # ω(ε) series
-sol[k].omega_k_val           # frequency correction ωₖ
+sol.omega_0                  # unperturbed frequency (auto-detected)
+sol.omega_expansion          # ω(ε) as a SymPy series
+sol[k].omega_k_val           # frequency correction ωₖ at order k
 sol[k].secularity_condition  # the equation that determined ωₖ
 sol.composite_t              # u(t, ε) with τ = ω(ε)·t substituted
 ```
 
-Multiple scales-specific:
+Multiple scales-specific attributes:
 
 ```python
 sol.T0, sol.T1               # fast and slow time symbols
-sol.amplitude_A              # A(T₁) — solved if possible
+sol.amplitude_A              # A(T₁) — solved if B = 0 and Bernoulli ODE applies
 sol.amplitude_B              # B(T₁)
-sol[k].solvability_A         # the amplitude ODE dA/dT₁ = ...
-```
-
----
-
-## Display
-
-`sol.show()` renders LaTeX in Jupyter and clean text in the terminal.
-The small parameter is always displayed as $\varepsilon$, regardless of what you named it (`eps`, `epsilon`, `mu`, etc.).
-
-```python
-sol.show()                    # full hierarchy
-sol.show(orders=[0, 1])       # selected orders only
-sol.show(mode='text')         # force plain text (e.g. in scripts)
+sol[k].solvability_A         # amplitude ODE for A
 ```
 
 ---
 
 ## Condition syntax
 
-Conditions are plain strings — same notation you'd write on paper:
+Conditions are plain strings — the same notation you'd write on paper:
 
 ```python
 conditions = ["u(0) = 1"]                          # 1st-order IVP
 conditions = ["u(0) = 1", "u'(0) = 0"]             # 2nd-order IVP
 conditions = ["u(0) = 0", "u(1) = 1"]              # BVP
-conditions = ["u(pi) = 0", "u'(0) = sqrt(2)"]      # symbolic points and values
+conditions = ["u(pi) = 0", "u'(0) = sqrt(2)"]      # symbolic points/values
 conditions = ["u(0) = 1/2", "u'(0) = 0"]           # rational values
-conditions = ["u(0) = 0.9", "u'(0) = 0"]           # floats auto-converted to rationals
+conditions = ["u(0) = 0.9", "u'(0) = 0"]           # floats auto-converted
 ```
 
 `asymptotics` automatically:
 - Detects IVP vs BVP from the number of distinct boundary points
-- Infers the dependent variable name (`u`) from the condition strings
-- Infers the independent variable (`t` for IVPs, `x` for BVPs) from the equation or defaults
-- Catches wrong count, conflicting, or inconsistent conditions with clear error messages
+- Infers the dependent variable name from condition strings
+- Infers the independent variable (`t` for IVPs, `x` for BVPs) from the equation
+- Reports exactly what was inferred (with override syntax) at construction time
+- Raises clear `ConditionError` for wrong count, conflicts, or inconsistencies
+
+**Limit conditions** for regularity at singular points:
+
+```python
+conditions = [
+    "F(0) = 0",
+    "F(1) = 1",
+    "lim(sqrt(2*eta)*F'', eta, 0) = 0",   # lim(expr, var, point) = value
+]
+```
+
+At each order the library substitutes the general solution, identifies which
+free constants cause divergence, and sets them to zero automatically.
 
 ---
 
-## Auto-inference of dependent and independent variables
+## Auto-inference of variables
 
-For `ODE`, both `dependent` and `independent` are optional:
+For `ODE`, `dependent` and `independent` are both optional:
 
 ```python
-# Fully minimal — everything inferred
+# Fully minimal — both inferred
 eq = ODE("u'' + u + eps*u**3", small_param="eps",
          conditions=["u(0) = 1", "u'(0) = 0"])
-# ℹ️  dependent = 'u' (inferred from conditions), independent = 't' (inferred from equation)
+# ℹ️  dependent = 'u' (inferred from conditions)
+# ℹ️  independent = 't' (IVP default)
+# To override: ODE(..., dependent='u', independent='t')
 
-# Override when needed
+# Override when the equation contains a non-standard independent variable
 eq = ODE("u'' + sin(tau)*u + eps*u**3", small_param="eps",
          conditions=["u(0) = 1", "u'(0) = 0"],
-         independent = "tau")
+         independent="tau")
 ```
 
-Independent variable inference looks for `{x, y, z, t}` in the equation.
-Everything else (`a`, `b`, `lambda`, `q`, ...) is treated as a parameter.
+Independent variable candidates inferred from the equation: `{x, y, z, t}`.
+All other symbols are treated as parameters. If a candidate symbol is
+ambiguous (could be independent variable or parameter), a hard error asks you
+to specify `independent` explicitly.
+
+---
+
+## Higher-order ODEs
+
+ODEs up to 6th order are supported using prime notation:
+
+```python
+# 4th-order ODE
+eq = ODE(
+    "eta*F'''' + alpha*(eta*F''' + 2*F'') + eps/2*(F*F''' - F'*F'') + 2*F'''",
+    small_param = "eps",
+    independent = "eta",
+    conditions  = ["F(0) = 0", "F(1/2) = 1", "F'(1/2) = 0",
+                   "lim(sqrt(2*eta)*F'', eta, 0) = 0"],
+)
+sol = eq.begin_expansion(order=1)
+```
+
+Prime notation: `u'` (1st), `u''` (2nd), `u'''` (3rd), `u''''` (4th),
+`u'''''` (5th), `u''''''` (6th).
+
+Lindstedt and multiple scales are limited to 2nd-order oscillators.
+Regular perturbation and `begin_expansion` work for any supported order.
 
 ---
 
@@ -418,12 +590,11 @@ ConditionError: Conflicting conditions at t=0:
   u(0) = 1
   u(0) = 2
 
-TypeError: 'expand_regular' order must be an integer, got str: 'two'
-  Example: eq.expand_regular(order=2)
+ValueError: Could not parse equation: 'u^2 + eps*u - 1'
+  Use ** for powers:  u**2  not  u^2
 
-ValueError: Lindstedt-Poincare requires an oscillatory problem (omega_0^2 > 0).
-  Suggestions: use expand_regular() for non-oscillatory problems,
-  or expand_multiple_scales() for damped oscillators.
+NotReadyError: Cannot access 'composite' — 1 order(s) not yet solved: [0]
+  Call sol[0].solve() or sol[0].set_solution(expr) first.
 ```
 
 ---
@@ -432,34 +603,39 @@ ValueError: Lindstedt-Poincare requires an oscillatory problem (omega_0^2 > 0).
 
 ```
 asymptotics/
-├── __init__.py                    ← public API
-├── numerics.py                    ← compare_numeric() and numerical solvers
+├── __init__.py                      ← public API
+├── numerics.py                      ← compare_numeric() dispatcher + SciPy solvers
+├── eval.py                          ← eval() for all hierarchy types
+├── latex_export.py                  ← to_latex() for all hierarchy types
+├── gauge.py                         ← non-standard gauge sequence support
 ├── core/
-│   ├── problem.py                 ← AlgebraicEquation, AlgebraicSystem, ODE, ODESystem
-│   ├── ode_system.py              ← ODESystem class
-│   ├── hierarchy.py               ← OrderHierarchy, OrderEntry
-│   ├── system_hierarchy.py        ← SystemHierarchy (coupled algebraic)
-│   ├── conditions.py              ← condition parser and validator
-│   └── exceptions.py              ← custom exceptions
+│   ├── problem.py                   ← AlgebraicEquation, AlgebraicSystem, ODE
+│   ├── ode_system.py                ← ODESystem
+│   ├── hierarchy.py                 ← OrderHierarchy, OrderEntry
+│   ├── system_hierarchy.py          ← SystemHierarchy (coupled algebraic)
+│   ├── conditions.py                ← parser: ParsedCondition, LimitCondition
+│   └── exceptions.py               ← custom exceptions
 ├── methods/
-│   ├── regular_algebraic.py       ← AlgebraicEquation solver
-│   ├── regular_algebraic_system.py← AlgebraicSystem solver
-│   ├── regular_ode.py             ← ODE regular perturbation
-│   ├── regular_ode_system.py      ← ODESystem solver
-│   ├── lindstedt.py               ← Lindstedt–Poincaré
-│   ├── multiple_scales.py         ← Multiple scales
-│   └── boundary_layer.py          ← Matched asymptotic expansions
+│   ├── regular_algebraic.py         ← AlgebraicEquation solver
+│   ├── regular_algebraic_system.py  ← AlgebraicSystem solver
+│   ├── regular_ode.py               ← ODE regular perturbation
+│   ├── regular_ode_system.py        ← ODESystem solver
+│   ├── lindstedt.py                 ← Lindstedt–Poincaré
+│   ├── multiple_scales.py           ← Method of multiple scales
+│   ├── boundary_layer.py            ← Matched asymptotic expansions
+│   └── stepwise.py                  ← StepwiseHierarchy, begin_expansion
 ├── display/
-│   ├── jupyter.py                 ← Algebraic LaTeX display
+│   ├── jupyter.py                   ← algebraic LaTeX display
 │   ├── ode_display.py
 │   ├── ode_system_display.py
 │   ├── lindstedt_display.py
 │   ├── multiple_scales_display.py
 │   └── boundary_layer_display.py
-└── tests/                         ← 164 tests, all passing
+└── tests/                           ← 195 tests, all passing
     ├── test_regular_algebraic.py
     ├── test_algebraic_system.py
     ├── test_errors.py
+    ├── test_gauge.py
     ├── test_ode.py
     ├── test_lindstedt.py
     ├── test_multiple_scales.py
@@ -469,43 +645,55 @@ asymptotics/
 
 ---
 
-## Notebooks
+## Example notebooks
 
-Seven Jupyter notebooks covering every method with worked examples and plots:
+Ten Jupyter notebooks covering every feature with worked examples:
 
 | Notebook | Topic |
 |:---------|:------|
-| `01_introduction.ipynb` | Algebraic equations — the basics |
+| `01_introduction.ipynb` | Algebraic equations — root selection, symbolic parameters |
 | `02_transcendental.ipynb` | Transcendental equations and coupled algebraic systems |
-| `03_ode.ipynb` | Regular perturbation for ODEs — IVP and BVP |
-| `04_lindstedt.ipynb` | Lindstedt–Poincaré — nonlinear oscillators |
-| `05_multiple_scales.ipynb` | Multiple scales — damped oscillators, Van der Pol |
-| `06_boundary_layers.ipynb` | Matched asymptotic expansions |
-| `07_ode_system.ipynb` | Coupled ODE systems |
+| `03_ode.ipynb` | Regular perturbation for ODEs — IVP and BVP, secular detection |
+| `04_lindstedt.ipynb` | Lindstedt–Poincaré — Duffing oscillator, amplitude dependence |
+| `05_multiple_scales.ipynb` | Multiple scales — damped oscillator, Van der Pol limit cycle |
+| `06_boundary_layers.ipynb` | Matched asymptotic expansions — left/right layers, variable coefficients |
+| `07_ode_system.ipynb` | Coupled ODE systems, predator-prey |
+| `08_advanced.ipynb` | Advanced features and edge cases |
+| `08_stepwise.ipynb` | Step-by-step API, higher-order ODEs, limit BCs |
+| `09_gauge.ipynb` | Non-standard gauge sequences |
 
 ---
 
-## Running tests
+## Running the tests
 
 ```bash
-pytest                     # all 164 tests
-pytest -v                  # verbose output
-pytest --cov=asymptotics   # with coverage report
+pytest                      # all 195 tests
+pytest -v                   # verbose output
+pytest --cov=asymptotics    # with coverage report
 ```
 
 ---
 
 ## Design philosophy
 
-- **String-based input** — write `"u'' + u + eps*u**3"` not `u.diff(t,2) + u + eps*u**3`
-- **Inspect everything** — every intermediate step is a symbolic SymPy expression
-- **Fail clearly** — errors tell you what went wrong and how to fix it
-- **Consistent API** — `expand_*`, `show()`, `compare_numeric()` work the same everywhere
-- **No SymPy wrestling** — the library handles all the symbolic machinery internally
+- **String-based input** — write `"u'' + u + eps*u**3"`, not `u.diff(t, 2) + u + eps*u**3`
+- **Transparent by default** — every intermediate step is a live SymPy expression you can inspect and reuse
+- **Consistent API** — `expand_*`, `show()`, `eval()`, `compare_numeric()`, `to_latex()` work identically across all problem types
+- **Self-contained results** — the problem is stored on the hierarchy; no need to pass it again to `compare_numeric` or `eval`
+- **Fail clearly** — errors name the problem, quote your input, and suggest a fix
+- **No SymPy wrestling** — the library manages all symbolic machinery internally; users stay at the mathematical level
+
+---
+
+## Citation
+
+If you use `asymptotics` in published work, please cite:
+
+> Tony Saad, *asymptotics: A symbolic perturbation theory toolkit for Python*,
+> University of Utah, 2025. https://github.com/saadgroup/asymptotics
 
 ---
 
 ## License
 
-MIT © 2025
-
+MIT © 2025 Tony Saad, University of Utah
