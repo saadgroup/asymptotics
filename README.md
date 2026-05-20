@@ -696,4 +696,4 @@ If you use `asymptotics` in published work, please cite:
 
 ## License
 
-MIT © 2025 Tony Saad, University of Utah
+MIT © 2026 Tony Saad, University of Utah
