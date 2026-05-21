@@ -286,13 +286,15 @@ def _compare_ode_oscillator(h, eps_list, plot_range=None, n_points=500,
     u_pert_all = {}
     u_num_all  = {}
 
+    param_subs = kwargs.get('param_subs', {})
+
     for i, eps_val in enumerate(eps_list):
         color = colors[i % len(colors)]
 
         if hasattr(h, 'expansion_t'):
-            comp_expr = h.expansion_t.subs(eps_sym, eps_val)
+            comp_expr = h.expansion_t.subs(eps_sym, eps_val).subs(param_subs)
         else:
-            comp_expr = h.expansion.subs(eps_sym, eps_val)
+            comp_expr = h.expansion.subs(eps_sym, eps_val).subs(param_subs)
 
         comp_fn = lambdify(t_sym, comp_expr, 'numpy')
         try:
@@ -300,8 +302,8 @@ def _compare_ode_oscillator(h, eps_list, plot_range=None, n_points=500,
         except Exception:
             u_pert = comp_fn(t_vals)
 
-        rhs_fn = _build_ode_rhs(h, eps_val, problem)
-        ics    = _get_ics(h, problem)
+        rhs_fn = _build_ode_rhs(h, eps_val, problem, param_subs=param_subs)
+        ics    = _get_ics(h, problem, eps_val=eps_val, param_subs=param_subs)
         sol    = _solve_ivp(rhs_fn, plot_range, ics,
                             dense_output=True, rtol=1e-10, atol=1e-12)
         u_num  = sol.sol(t_vals)[0]

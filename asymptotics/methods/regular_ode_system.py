@@ -278,9 +278,12 @@ def expand_regular_ode_system(problem, order: int = 2) -> ODESystemHierarchy:
                 ode_expr = ode_expr.subs(func, sol_expr)
             ode_expr = expand(ode_expr)
 
-            # Pre-expand trig for dsolve speed
-            from sympy import exp as _exp, cos as _cos
-            ode_expr = expand(expand(ode_expr.rewrite(_exp)).rewrite(_cos))
+            # Rewrite to exp form so dsolve can use variation of parameters /
+            # undetermined coefficients cleanly.  Do NOT rewrite back to cos/sin
+            # here — that converts exp(-t) → cosh(t)-sinh(t) which breaks
+            # undetermined coefficients for terms like t*exp(-2t).
+            from sympy import exp as _exp
+            ode_expr = expand(ode_expr.rewrite(_exp))
             ode_eq   = Eq(ode_expr, 0)
 
             # Get the ODE order for this variable
