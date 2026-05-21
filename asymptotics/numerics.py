@@ -563,41 +563,79 @@ def _get_system_ics(problem):
 
 def _compare_algebraic_system(h, eps_list, problem=None, **kwargs):
     """
-    Compare coupled algebraic system expansion against scipy root-finder.
-    Plots each variable vs exact root over eps range.
+    Compare coupled algebraic system expansion against scipy.optimize.root.
+    Plots perturbation vs numerical root for each variable over eps range.
     """
     import matplotlib.pyplot as plt
+    from scipy.optimize import root
+    from sympy import lambdify
 
-    eps_sym   = h.small_param
-    variables = list(h.hierarchies.keys())
-    n_vars    = len(variables)
+    if not hasattr(h, '_original_equations') or not hasattr(h, '_dependent_syms'):
+        raise ValueError(
+            "\n\n  compare_numeric for algebraic systems requires _original_equations "
+            "and _dependent_syms on the hierarchy.\n"
+            "  Re-run expand_regular() with the current version of asymptotics.\n"
+        )
+
+    eps_sym      = h.small_param
+    dep_syms     = h._dependent_syms
+    orig_eqs     = h._original_equations
+    variables    = list(h.hierarchies.keys())
+    n_vars       = len(variables)
+    param_subs   = kwargs.get('param_subs', {})
 
     eps_vals = np.array(sorted(eps_list))
 
-    fig, axes = plt.subplots(1, n_vars, figsize=(5*n_vars, 4), squeeze=False)
+    # Build a lambdified residual F(vec, eps_val) -> list of n residuals
+    # Apply any symbolic parameter substitutions first
+    eqs_subbed = [f.subs(param_subs) for f in orig_eqs]
+    residual_fn = lambdify([dep_syms, eps_sym], eqs_subbed, "numpy")
 
-    results = {}
-    for j, var in enumerate(variables):
-        vh = h.hierarchies[var]
-        pert_vals = np.array([
-            complex(vh.expansion.subs(eps_sym, ev).subs(kwargs.get('param_subs', {})).evalf()).real for ev in eps_vals
+    # Leading-order solution as initial guess (evaluated at eps=0)
+    x0 = np.array([
+        float(complex(h.hierarchies[v].expansion.subs(eps_sym, 0)
+                      .subs(param_subs).evalf()).real)
+        for v in variables
+    ])
+
+    # Solve numerically at each eps value
+    num_results = {v: np.empty(len(eps_vals)) for v in variables}
+    for i, ev in enumerate(eps_vals):
+        res = root(lambda vec: residual_fn(vec, ev), x0)
+        for j, v in enumerate(variables):
+            num_results[v][i] = res.x[j]
+        x0 = res.x  # warm-start next solve
+
+    # Perturbation values
+    pert_results = {}
+    order = max(e.order for e in next(iter(h.hierarchies.values())).entries)
+    for v in variables:
+        vh = h.hierarchies[v]
+        pert_results[v] = np.array([
+            complex(vh.expansion.subs(eps_sym, ev).subs(param_subs).evalf()).real
+            for ev in eps_vals
         ])
 
-        axes[0][j].plot(eps_vals, pert_vals, 'ro--', lw=1.5, ms=5,
-                        markevery=max(1, len(eps_vals)//10),
-                        label=f'Perturbation (order {len(vh)-1})')
-        axes[0][j].set_title(f'{var}(ε)')
-        axes[0][j].set_xlabel('ε')
-        axes[0][j].legend(fontsize=8)
-        results[var] = pert_vals
+    # Plot
+    fig, axes = plt.subplots(1, n_vars, figsize=(5 * n_vars, 4), squeeze=False)
+    for j, v in enumerate(variables):
+        ax = axes[0][j]
+        ax.plot(eps_vals, num_results[v],  'b-',   lw=2,   label='Numerical (root)')
+        ax.plot(eps_vals, pert_results[v], 'ro--', lw=1.5, ms=5,
+                markevery=max(1, len(eps_vals) // 10),
+                label=f'Perturbation (order {order})')
+        ax.set_title(f'{v}(ε)')
+        ax.set_xlabel('ε')
+        ax.legend(fontsize=8)
 
-    plt.suptitle('Algebraic system — regular perturbation', fontsize=11)
+    plt.suptitle('Algebraic system — regular perturbation vs numerical', fontsize=11)
     plt.tight_layout()
 
     return {
-        'eps'    : eps_vals,
-        'results': results,
-        'fig'    : fig,
+        'eps'        : eps_vals,
+        'perturbation': pert_results,
+        'numerical'  : num_results,
+        'fig'        : fig,
     }
 
 

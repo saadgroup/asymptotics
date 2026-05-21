@@ -142,10 +142,12 @@ def expand_regular_system(problem, order: int = 3) -> SystemHierarchy:
     # ------------------------------------------------------------------
     # Step 6: assemble SystemHierarchy
     # ------------------------------------------------------------------
-    sys_hier             = SystemHierarchy()
-    sys_hier.small_param = eps
-    sys_hier._method     = "Regular perturbation — algebraic system"
-    sys_hier.variables   = dep_names
+    sys_hier                     = SystemHierarchy()
+    sys_hier.small_param         = eps
+    sys_hier._method             = "Regular perturbation — algebraic system"
+    sys_hier.variables           = dep_names
+    sys_hier._original_equations = eqs        # stored for compare_numeric
+    sys_hier._dependent_syms     = dep_syms   # stored for compare_numeric
 
     # Store the full coupled system at each order for display.
     # We want to show the coupling: substitute lower-order solutions for
