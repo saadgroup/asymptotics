@@ -74,13 +74,13 @@ def _build_full_latex(h: OrderHierarchy, orders: Optional[List[int]] = None) -> 
 
     order_block = "\n".join(lines)
 
-    # Composite
+    # Expansion
     from sympy import Symbol as Sym
     dep = entries[0].symbol  # e.g. x_0 — extract base name
     base = str(dep)[:-2] if str(dep).endswith('_0') else str(dep)
     comp_lhs = Sym(base)
 
-    composite_latex = latex(Eq(comp_lhs, h.composite))
+    expansion_latex = latex(Eq(comp_lhs, h.expansion))
 
     full = (
         r"\textbf{Perturbation Hierarchy}"
@@ -91,9 +91,9 @@ def _build_full_latex(h: OrderHierarchy, orders: Optional[List[int]] = None) -> 
         + r"\\[4pt]"
         + order_block
         + r"\\[10pt]"
-        + r"\textbf{Composite expansion:}"
+        + r"\textbf{Expansion expansion:}"
         + r"\\[4pt]"
-        + r"\boxed{" + composite_latex + r"}"
+        + r"\boxed{" + expansion_latex + r"}"
     )
 
     return full
@@ -205,7 +205,7 @@ def _show_jupyter(h, orders, display, Math, HTML):
                 f"ℹ️ {entry.note}</div>"
             ))
 
-    # Composite in a box — terms ordered low to high, with O() remainder
+    # Expansion in a box — terms ordered low to high, with O() remainder
     comp_lhs = Symbol(base)
     max_order = max(e.order for e in h.entries)
     next_order = max_order + 1
@@ -298,7 +298,7 @@ def _show_text(h, orders):
 
     print("-" * width)
     comp_sym = Symbol(base)
-    print(f"  Composite:  {comp_sym} = {pretty(h.composite)}")
+    print(f"  Expansion:  {comp_sym} = {pretty(h.expansion)}")
     print("=" * width)
 
 
@@ -312,7 +312,7 @@ def _get_base_name(sym: Symbol) -> str:
 
 def _show_jupyter_body(h, orders=None):
     """
-    Show just the ansatz, order blocks, and composite for a hierarchy —
+    Show just the ansatz, order blocks, and expansion for a hierarchy —
     without the title header. Used by SystemHierarchy.
     """
     try:
@@ -360,7 +360,7 @@ def _show_jupyter_body(h, orders=None):
                 f"font-size:0.82em;color:#666;'>ℹ️ {entry.note}</div>"
             ))
 
-    # Composite
+    # Expansion
     comp_lhs  = Symbol(base)
     max_order = max(e.order for e in h.entries)
     pieces    = []

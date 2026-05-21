@@ -86,9 +86,9 @@ def _show_jupyter(h, display, Math, HTML):
                 + " = " + _lx(entry.particular_solution, eps)
             ))
 
-    # Composites — build term-by-term low-to-high to match show_ode ordering
+    # Expansions — build term-by-term low-to-high to match show_ode ordering
     display(HTML(
-        "<div style='margin-top:12px;font-weight:600;'>Composite expansions:</div>"
+        "<div style='margin-top:12px;font-weight:600;'>Expansion expansions:</div>"
     ))
     for var in h.variables:
         pieces = []
@@ -141,7 +141,7 @@ def _show_text(h):
         print()
 
     print("-" * width)
-    print("  Composites:")
+    print("  Expansions:")
     for var in h.variables:
         pieces = []
         for k in range(N + 1):

@@ -124,7 +124,7 @@ def _show_jupyter(h, orders, display, Math, HTML):
         + r" + \mathcal{O}\!\left(\varepsilon^{%d}\right)}" % (len(entries))
     ))
 
-    # Composite in tau
+    # Expansion in tau
     max_order = max(e.order for e in h.entries)
     pieces    = []
     for entry in sorted(h.entries, key=lambda e: e.order):
@@ -187,6 +187,6 @@ def _show_text(h, orders):
 
     print("-" * width)
     print(f"  ω(ε) = {h.omega_expansion} + O(ε{sup[len(entries)] if len(entries)<len(sup) else '...'})")
-    print(f"  {dep}(τ,ε) = {h.composite}")
+    print(f"  {dep}(τ,ε) = {h.expansion}")
     print(f"  where τ = ω(ε)·t")
     print("=" * width)

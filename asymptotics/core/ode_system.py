@@ -9,24 +9,24 @@ Example
 -------
 >>> sys = ODESystem(
 ...     equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
-...     dependents  = ["u", "v"],
 ...     small_param = "eps",
-...     independent = "t",
 ...     conditions  = ["u(0) = 1", "v(0) = 1"],
 ... )
 >>> sol = sys.expand_regular(order=2)
->>> sol["u"].composite
+>>> sol["u"].expansion
 >>> sol["v"][1].particular_solution
 >>> sol.show()
 """
 
 from __future__ import annotations
+import re as _re
 from sympy import (
     Symbol, Function, symbols, sympify, diff,
     series, expand, simplify, dsolve, solve,
     Add, Integer, Eq
 )
 from asymptotics.core.conditions import parse_and_validate_conditions, ConditionError
+from asymptotics.core.problem import _INDEP_CANDIDATES, _MATH_NAMES
 
 
 # ---------------------------------------------------------------------------
@@ -34,17 +34,135 @@ from asymptotics.core.conditions import parse_and_validate_conditions, Condition
 # ---------------------------------------------------------------------------
 
 def _detect_order(eq_str: str, dep: str) -> int:
-    if dep + "''" in eq_str:
-        return 2
-    elif dep + "'" in eq_str:
-        return 1
+    """Detect the order of *dep* in *eq_str* (up to 6th order)."""
+    for n in range(6, 0, -1):
+        if dep + "'" * n in eq_str:
+            return n
     return 0
 
 
 def _preprocess(eq_str: str, dep: str) -> str:
-    eq_str = eq_str.replace(dep + "''", f"d2{dep}")
-    eq_str = eq_str.replace(dep + "'",  f"d{dep}")
+    """Replace prime notation with internal derivative symbols (up to 6th order)."""
+    for n in range(6, 0, -1):
+        primes = "'" * n
+        token  = f"d{n}{dep}" if n > 1 else f"d{dep}"
+        eq_str = eq_str.replace(dep + primes, token)
     return eq_str
+
+
+def _infer_dependents_system(equations: list, conditions: list) -> tuple[list, list]:
+    """
+    Infer dependent variable names from conditions and match each equation
+    to its owner dependent variable.
+
+    Strategy
+    --------
+    1. Extract unique dependent names from condition strings in order of
+       first appearance (skipping ``lim(...)`` conditions).
+    2. For each inferred name, find the equation in which *that* variable
+       has at least one derivative (prime notation).  If two variables both
+       appear with primes in the same equation the pairing is ambiguous and
+       a ``ValueError`` is raised.
+
+    Returns
+    -------
+    (dependents, reordered_equations) : (list[str], list[str])
+        ``reordered_equations[i]`` is the equation that belongs to
+        ``dependents[i]``, regardless of the order they were supplied.
+    """
+    # Step 1 — collect unique dep names from conditions
+    dep_names = []
+    for cond in conditions:
+        stripped = cond.strip()
+        if stripped.lower().startswith('lim('):
+            continue
+        m = _re.match(r'^([a-zA-Z_]\w*)', stripped)
+        if m:
+            name = m.group(1)
+            if name not in dep_names:
+                dep_names.append(name)
+
+    if not dep_names:
+        raise ValueError(
+            "\n\n  Could not infer dependent variables from conditions.\n"
+            "  Specify them explicitly: ODESystem(..., dependents=['u', 'v'])\n"
+        )
+
+    # Step 2 — match each equation to its owner
+    matched = {}   # dep_name -> equation string
+    for eq in equations:
+        owners = [d for d in dep_names if d + "'" in eq]
+        if len(owners) == 0:
+            raise ValueError(
+                f"\n\n  Could not match equation '{eq}' to any dependent variable.\n"
+                f"  No derivatives found for any of: {dep_names}\n"
+                f"  Check that prime notation is used (e.g. u', u'').\n"
+            )
+        if len(owners) > 1:
+            raise ValueError(
+                f"\n\n  Equation '{eq}' has derivatives of multiple variables: {owners}.\n"
+                f"  Cannot infer ownership unambiguously.\n"
+                f"  Specify dependents explicitly: ODESystem(..., dependents={dep_names})\n"
+            )
+        dep = owners[0]
+        if dep in matched:
+            raise ValueError(
+                f"\n\n  Multiple equations contain derivatives of '{dep}'.\n"
+                f"  Specify dependents explicitly: ODESystem(..., dependents={dep_names})\n"
+            )
+        matched[dep] = eq
+
+    # Check every dep has an equation
+    missing = [d for d in dep_names if d not in matched]
+    if missing:
+        raise ValueError(
+            f"\n\n  No equation found with a derivative of: {missing}\n"
+            f"  Specify dependents explicitly: ODESystem(..., dependents={dep_names})\n"
+        )
+
+    reordered = [matched[d] for d in dep_names]
+    return dep_names, reordered
+
+
+def _infer_independent_system(equations: list, dependents: list,
+                               small_param: str) -> tuple[str, bool]:
+    """
+    Infer the independent variable for an ODE system.
+
+    Scans all equation strings for tokens in ``_INDEP_CANDIDATES``
+    after excluding all dependent names, the small parameter, derivative
+    notation, and known math function names.
+
+    Returns
+    -------
+    (name, was_inferred) : (str, bool)
+        ``was_inferred`` is True when the name came from scanning rather
+        than being supplied by the caller.
+    """
+    combined = ' '.join(equations)
+    tokens   = set(_re.findall(r'[a-zA-Z_]\w*', combined))
+
+    exclude = set(dependents) | {small_param} | _MATH_NAMES
+    # Also exclude derivative notation: du, d2u, ..., d6u for every dep
+    for dep in dependents:
+        exclude.add(f'd{dep}')
+        for n in range(2, 7):
+            exclude.add(f'd{n}{dep}')
+
+    candidates = (tokens & _INDEP_CANDIDATES) - exclude
+
+    if len(candidates) == 1:
+        return candidates.pop(), True
+    # Ambiguous or absent — fall back to 't' (most ODE systems are IVPs).
+    # If 't' is itself a dependent name the user must supply independent= explicitly.
+    fallback = 't'
+    if fallback in set(dependents):
+        raise ValueError(
+            f"\n\n  Could not infer the independent variable: the fallback 't' "
+            f"is already used as a dependent variable name.\n"
+            f"  Please supply it explicitly: ODESystem(..., independent='...')\n"
+        )
+    return fallback, True
 
 
 # ---------------------------------------------------------------------------
@@ -63,47 +181,77 @@ class ODESystem:
     equations : list of str
         Each equation set equal to zero, e.g.:
           ["u' + u + eps*v", "v' + 2*v + eps*u**2"]
-    dependents : list of str
-        Names of the dependent variables, e.g. ["u", "v"].
     small_param : str
         Name of the small parameter, e.g. "eps".
-    independent : str
-        Name of the independent variable, e.g. "t".
     conditions : list of str
         Initial or boundary conditions for ALL variables, e.g.:
           ["u(0) = 1", "v(0) = 0"]
         One condition per variable per order of that variable's ODE.
+    dependents : list of str, optional
+        Names of the dependent variables, e.g. ["u", "v"].
+        If omitted, inferred from the leading identifiers in *conditions*
+        (e.g. ``"u(0) = 1"`` → ``"u"``).
+    independent : str, optional
+        Name of the independent variable, e.g. "t".
+        If omitted, inferred by scanning the equations for tokens in
+        {r, x, y, z, t}; falls back to 't' when ambiguous or absent.
 
     Examples
     --------
     >>> from asymptotics import ODESystem
+    >>> # both dependents and independent inferred automatically
     >>> sys = ODESystem(
     ...     equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
-    ...     dependents  = ["u", "v"],
     ...     small_param = "eps",
-    ...     independent = "t",
     ...     conditions  = ["u(0) = 1", "v(0) = 1"],
     ... )
     >>> sol = sys.expand_regular(order=2)
     >>> sol.show()
-    >>> sol["u"].composite
+    >>> sol["u"].expansion
     >>> sol["v"][1].particular_solution
     """
 
     def __init__(
         self,
         equations:   list,
-        dependents:  list,
         small_param: str,
-        independent: str,
         conditions:  list,
+        dependents:  list = None,
+        independent: str  = None,
     ):
         from sympy import sympify as _sympify
+
+        # ------------------------------------------------------------------
+        # Infer dependent variables if not supplied
+        # ------------------------------------------------------------------
+        deps_supplied = dependents is not None
+        if not deps_supplied:
+            dependents, equations = _infer_dependents_system(equations, conditions)
+            print(
+                f"  ℹ️  dependents = {dependents} (inferred from conditions)\n"
+                f"     To override: ODESystem(..., dependents={dependents})"
+            )
 
         if len(equations) != len(dependents):
             raise ValueError(
                 f"\n\n  Number of equations ({len(equations)}) must match "
                 f"number of dependents ({len(dependents)}).\n"
+            )
+
+        # ------------------------------------------------------------------
+        # Infer independent variable if not supplied
+        # ------------------------------------------------------------------
+        indep_supplied = independent is not None
+        if not indep_supplied:
+            independent, _ = _infer_independent_system(equations, dependents,
+                                                        small_param)
+            print(
+                f"  ℹ️  independent = '{independent}' (inferred from equations)\n"
+                f"     To override: ODESystem(..., independent='{independent}')"
+            )
+        else:
+            print(
+                f"  ℹ️  independent = '{independent}' (supplied)"
             )
 
         self.dependent_names = dependents

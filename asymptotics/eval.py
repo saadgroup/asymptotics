@@ -1,7 +1,7 @@
 """
 asymptotics.eval
 =============
-Evaluate perturbation composites at given eps and independent variable values.
+Evaluate perturbation expansions at given eps and independent variable values.
 
 Usage
 -----
@@ -105,18 +105,18 @@ def _eval_algebraic(h, eps_list, scalar, param_subs=None):
 
     param_subs = param_subs or {}
     # Check for remaining symbolic parameters after eps and param substitution
-    test_expr = h.composite.subs(eps_sym, eps_list[0]).subs(param_subs)
+    test_expr = h.expansion.subs(eps_sym, eps_list[0]).subs(param_subs)
     remaining = test_expr.free_symbols
     if remaining:
         syms = ', '.join(str(s) for s in sorted(remaining, key=str))
         raise ValueError(
-            f"\n\n  Cannot evaluate — composite still contains symbolic parameters: {syms}\n"
-            f"  Substitute them first using sol.composite.subs(b, 2.0)\n"
-            f"  Or evaluate manually: float(sol.composite.subs(eps, 0.1).subs(b, 2.0))\n"
+            f"\n\n  Cannot evaluate — expansion still contains symbolic parameters: {syms}\n"
+            f"  Substitute them first using sol.expansion.subs(b, 2.0)\n"
+            f"  Or evaluate manually: float(sol.expansion.subs(eps, 0.1).subs(b, 2.0))\n"
         )
 
     vals = np.array([
-        complex(h.composite.subs(eps_sym, ev).subs(param_subs).evalf()).real
+        complex(h.expansion.subs(eps_sym, ev).subs(param_subs).evalf()).real
         for ev in eps_list
     ])
     return float(vals[0]) if scalar else vals
@@ -137,16 +137,16 @@ def _eval_ode(h, eps_list, at, scalar, param_subs=None):
     eps_sym = h.small_param
     t_sym   = h.independent
 
-    # Use composite_t for Lindstedt/MS — this has tau=omega(eps)*t already
+    # Use expansion_t for Lindstedt/MS — this has tau=omega(eps)*t already
     # substituted, so passing physical time t_vals is correct.
     # omega(eps) is embedded as a coefficient of t after eps substitution.
-    # For regular perturbation, composite is already in physical time.
-    composite  = getattr(h, 'composite_t', h.composite)
+    # For regular perturbation, expansion is already in physical time.
+    expansion  = getattr(h, 'expansion_t', h.expansion)
     param_subs = param_subs or {}
 
     results = {}
     for ev in eps_list:
-        expr = composite.subs(eps_sym, ev).subs(param_subs)
+        expr = expansion.subs(eps_sym, ev).subs(param_subs)
         fn   = lambdify(t_sym, expr, 'numpy')
         try:
             vals = np.real(np.array([complex(fn(ti)) for ti in at]))
@@ -176,7 +176,7 @@ def _eval_boundary_layer(h, eps_list, at, scalar, param_subs=None):
 
     results = {}
     for ev in eps_list:
-        expr = h.composite.subs(eps_sym, ev)
+        expr = h.expansion.subs(eps_sym, ev)
         fn   = lambdify(x_sym, expr, 'numpy')
         vals = fn(at)
         # broadcast scalar (e.g. outer=0)
@@ -210,7 +210,7 @@ def _eval_ode_system(h, eps_list, at, scalar, param_subs=None):
     for ev in eps_list:
         var_results = {}
         for var in variables:
-            expr = h[var].composite.subs(eps_sym, ev)
+            expr = h[var].expansion.subs(eps_sym, ev)
             fn   = lambdify(t_sym, expr, 'numpy')
             try:
                 vals = np.real(np.array([complex(fn(ti)) for ti in at]))
@@ -237,7 +237,7 @@ def _eval_algebraic_system(h, eps_list, scalar, param_subs=None):
         vh = h.hierarchies[var]
         param_subs = param_subs or {}
         vals = np.array([
-            float(vh.composite.subs(eps_sym, ev).subs(param_subs))
+            float(vh.expansion.subs(eps_sym, ev).subs(param_subs))
             for ev in eps_list
         ])
         result[var] = float(vals[0]) if scalar else vals

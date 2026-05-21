@@ -157,7 +157,7 @@ class TestAlgebraicGauge:
         sol = eq.expand_regular(order=3)
         # Known result: 1 - eps/3 - eps^3/81
         from sympy import Rational as R
-        val = sol.composite.subs(Symbol("eps"), R(1, 10))
+        val = sol.expansion.subs(Symbol("eps"), R(1, 10))
         assert abs(float(val) - (1 - 0.1/3)) < 1e-3
 
     def test_sqrt_gauge_x_squared_minus_eps(self):
@@ -166,9 +166,9 @@ class TestAlgebraicGauge:
         eq = AlgebraicEquation("x**2 - eps", dependent="x", small_param="eps")
         sol = eq.expand_regular(order=2, gauge=["sqrt(eps)", "eps", "eps**(3/2)"])
         # Compare numerically — avoids Symbol assumption mismatches
-        eps_sym = list(sol.composite.free_symbols)[0]
+        eps_sym = list(sol.expansion.free_symbols)[0]
         for v in [0.01, 0.1, 0.25]:
-            pert  = float(sol.composite.subs(eps_sym, v))
+            pert  = float(sol.expansion.subs(eps_sym, v))
             exact = float(v**0.5)
             assert abs(pert - exact) < 1e-14
 
@@ -177,9 +177,9 @@ class TestAlgebraicGauge:
         eq = AlgebraicEquation("x**3 + eps**2*x - 1", dependent="x", small_param="eps")
         sol = eq.expand_regular(order=2, gauge="eps**2")
         # Check numerically — avoids Symbol assumption mismatches
-        eps_sym = list(sol.composite.free_symbols)[0]
+        eps_sym = list(sol.expansion.free_symbols)[0]
         for v in [0.1, 0.2, 0.3]:
-            pert     = float(sol.composite.subs(eps_sym, v))
+            pert     = float(sol.expansion.subs(eps_sym, v))
             expected = 1 - v**2 / 3
             assert abs(pert - expected) < 1e-12
 
@@ -223,7 +223,7 @@ class TestODEGauge:
         eq = ODE("u'' + u + eps*u", small_param="eps",
                  conditions=["u(0)=1", "u'(0)=0"])
         sol = eq.expand_regular(order=2)
-        assert sol.composite is not None
+        assert sol.expansion is not None
 
     def test_even_power_gauge_ode(self):
         """u'' + u + eps^2*u^3; gauge=eps^2 → u_1=0 by symmetry."""
@@ -233,7 +233,7 @@ class TestODEGauge:
         import sympy as sp
         t = sol.independent
         # u_0 = cos(t); u_1 = 0 (odd power absent from even gauge)
-        # composite = cos(t) + eps^2*(correction)
+        # expansion = cos(t) + eps^2*(correction)
         u0 = sol.entries[0].particular_solution
         assert simplify(u0 - sp.cos(t)) == 0
 
@@ -262,7 +262,7 @@ class TestGaugeNumerical:
         eq = AlgebraicEquation("x**2 - eps", dependent="x", small_param="eps")
         sol = eq.expand_regular(order=2, gauge=["sqrt(eps)", "eps", "eps**(3/2)"])
         for eps_val in [0.01, 0.05, 0.1, 0.2]:
-            pert = float(sol.composite.subs(Symbol("eps"), eps_val))
+            pert = float(sol.expansion.subs(Symbol("eps"), eps_val))
             exact = eps_val**0.5
             assert abs(pert - exact) < 1e-12, f"eps={eps_val}: {pert} vs {exact}"
 
@@ -273,6 +273,6 @@ class TestGaugeNumerical:
         eq = AlgebraicEquation("x**3 + eps**2*x - 1", dependent="x", small_param="eps")
         sol = eq.expand_regular(order=2, gauge="eps**2")
         for eps_val in [0.1, 0.2, 0.3]:
-            pert = float(sol.composite.subs(Symbol("eps"), eps_val))
+            pert = float(sol.expansion.subs(Symbol("eps"), eps_val))
             exact = float(fsolve(lambda x: x**3 + eps_val**2*x - 1, 1.0)[0])
             assert abs(pert - exact) < 1e-4, f"eps={eps_val}: pert={pert}, exact={exact}"

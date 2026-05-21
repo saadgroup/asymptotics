@@ -19,7 +19,7 @@ class TestLayerAtLeft:
     eps*u'' + u' + u = 0,  u(0)=0, u(1)=1
     Layer at x=0 (p=1>0).
     Outer: u_out = e^{1-x}
-    Composite: (1 - e^{(eps-1)x/eps}) * e^{1-x}
+    Expansion: (1 - e^{(eps-1)x/eps}) * e^{1-x}
     """
 
     def setup_method(self):
@@ -43,10 +43,10 @@ class TestLayerAtLeft:
         val = simplify(self.sol.outer.subs(x_sym, 1) - 1)
         assert val == 0
 
-    def test_composite_bcs(self):
-        """Composite satisfies u(0)=0 exactly; u(1)=1 up to O(eps)."""
+    def test_expansion_bcs(self):
+        """Expansion satisfies u(0)=0 exactly; u(1)=1 up to O(eps)."""
         from sympy import lambdify
-        comp = self.sol.composite
+        comp = self.sol.expansion
         eps  = self.sol.small_param
         # u(0) = 0 exactly (inner BC)
         assert simplify(comp.subs(x_sym, 0)) == 0
@@ -55,10 +55,10 @@ class TestLayerAtLeft:
         assert abs(comp_fn(1) - 1) < 0.02
 
     def test_numerical_accuracy(self):
-        """Composite error should be O(eps)."""
+        """Expansion error should be O(eps)."""
         eps_val = 0.05
         from sympy import lambdify
-        comp_fn = lambdify(x_sym, self.sol.composite.subs(self.eps, eps_val), 'numpy')
+        comp_fn = lambdify(x_sym, self.sol.expansion.subs(self.eps, eps_val), 'numpy')
         x_vals  = np.linspace(0, 1, 200)
 
         def bvp(x, y): return [y[1], (-y[1] - y[0]) / eps_val]
@@ -76,7 +76,7 @@ class TestLayerAtRight:
     eps*u'' - u' + u = 0,  u(0)=0, u(1)=1
     Layer at x=1 (p=-1<0).
     Outer: u_out = 0
-    Composite: e^{(x-1)/eps}
+    Expansion: e^{(x-1)/eps}
     """
 
     def setup_method(self):
@@ -94,8 +94,8 @@ class TestLayerAtRight:
         """Outer solution is 0 for this problem."""
         assert simplify(self.sol.outer) == 0
 
-    def test_composite_bcs(self):
-        comp = self.sol.composite
+    def test_expansion_bcs(self):
+        comp = self.sol.expansion
         eps = self.sol.small_param
         # u(0): e^{-1/eps} ≈ 0 for small eps
         # u(1): e^0 = 1
@@ -106,7 +106,7 @@ class TestLayerAtRight:
         from sympy import lambdify
         x_vals  = np.linspace(0, 1, 200)
         comp_fn = lambdify(x_sym,
-                           self.sol.composite.subs(self.sol.small_param, eps_val),
+                           self.sol.expansion.subs(self.sol.small_param, eps_val),
                            'numpy')
 
         def bvp(x, y): return [y[1], (y[1] - y[0]) / eps_val]

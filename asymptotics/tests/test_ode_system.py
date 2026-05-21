@@ -72,8 +72,8 @@ class TestTwoEquationSystem:
     def test_numerical_accuracy(self):
         eps_val = 0.1
         from sympy import lambdify
-        u_fn = lambdify(t_sym, self.sol['u'].composite.subs(self.eps, eps_val), 'numpy')
-        v_fn = lambdify(t_sym, self.sol['v'].composite.subs(self.eps, eps_val), 'numpy')
+        u_fn = lambdify(t_sym, self.sol['u'].expansion.subs(self.eps, eps_val), 'numpy')
+        v_fn = lambdify(t_sym, self.sol['v'].expansion.subs(self.eps, eps_val), 'numpy')
 
         def rhs(t, y): return [-y[0] - eps_val*y[1], -2*y[1] - eps_val*y[0]**2]
         num    = solve_ivp(rhs, [0, 5], [1.0, 1.0], dense_output=True, rtol=1e-10)

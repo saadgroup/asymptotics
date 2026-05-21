@@ -209,8 +209,8 @@ class SystemHierarchy:
                 + sol_parts
             ))
 
-        # Composite for each variable
-        display(HTML("<div style='margin-top:8px;font-weight:600;'>Composite expansions:</div>"))
+        # Expansion for each variable
+        display(HTML("<div style='margin-top:8px;font-weight:600;'>Expansion expansions:</div>"))
         for var in self.variables:
             h   = self.hierarchies[var]
             lhs = latex(Symbol(var))
@@ -284,10 +284,10 @@ class SystemHierarchy:
             print(f"           ⟹  {sol_str}")
             print()
 
-        # Composites
+        # Expansions
         print("-" * width)
-        print("  Composite expansions:")
+        print("  Expansion expansions:")
         for var in self.variables:
             h = self.hierarchies[var]
-            print(f"    {var}(ε) = {pretty(h.composite)}")
+            print(f"    {var}(ε) = {pretty(h.expansion)}")
         print("=" * width)

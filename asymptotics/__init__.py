@@ -51,7 +51,7 @@ sol.show(orders=None, mode='auto')
     LaTeX in Jupyter; plain text in terminal.
 
 sol.eval(eps, at=None, params=None)
-    Evaluate composite as a NumPy array (or float for algebraic).
+    Evaluate expansion as a NumPy array (or float for algebraic).
     Accepts scalar or list for eps.
 
 sol.compare_numeric(eps, params=None, plot_range=None, filename=None)
@@ -68,9 +68,9 @@ sol[k].ode                   — ODE/equation at order k
 sol[k].general_solution      — with free integration constants
 sol[k].particular_solution   — constants fixed by ICs/BCs
 sol[k].secular               — True if secular terms detected (ODE only)
-sol.composite                — assembled SymPy expansion
+sol.expansion                — assembled SymPy expansion
 
-Lindstedt extras: sol.omega_0, sol.omega_expansion, sol.composite_t,
+Lindstedt extras: sol.omega_0, sol.omega_expansion, sol.expansion_t,
                   sol[k].omega_k_val, sol[k].omega_k_sym, sol[k].secularity_condition
 Multiple-scales extras: sol.T0, sol.T1, sol.amplitude_A, sol.amplitude_B,
                         sol[k].solvability_A, sol[k].solvability_B,

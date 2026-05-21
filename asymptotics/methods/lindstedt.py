@@ -42,8 +42,8 @@ class LindstedtHierarchy:
     entries         : list of LindstedtOrderEntry
     omega_expansion : Expr   — omega = omega_0 + eps*omega_1 + ...
     omega_values    : dict   — {omega_k_sym: value}
-    composite       : Expr   — u(tau, eps) assembled
-    composite_t     : Expr   — u(t, eps) with tau = omega*t
+    expansion       : Expr   — u(tau, eps) assembled
+    expansion_t     : Expr   — u(t, eps) with tau = omega*t
     small_param     : Symbol
     independent     : Symbol — t
     tau             : Symbol — strained time
@@ -54,8 +54,8 @@ class LindstedtHierarchy:
         self.entries         = []
         self.omega_expansion = None
         self.omega_values    = {}
-        self.composite       = None
-        self.composite_t     = None
+        self.expansion       = None
+        self.expansion_t     = None
         self.small_param     = None
         self.independent     = None
         self.tau             = None
@@ -89,10 +89,10 @@ class LindstedtHierarchy:
         -------
         dict with keys:
             't' or 'x'    : ndarray — evaluation points
-            'u_pert'      : ndarray — perturbation composite
+            'u_pert'      : ndarray — perturbation expansion
             'u_numerical' : ndarray — numerical solution
             'fig'         : matplotlib Figure
-            (boundary layer also returns 'u_outer', 'u_inner', 'u_composite')
+            (boundary layer also returns 'u_outer', 'u_inner', 'u_expansion')
         """
         from asymptotics.numerics import compare_numeric
         problem = getattr(self, '_problem', None)
@@ -129,7 +129,7 @@ class LindstedtHierarchy:
 
     def eval(self, eps, at=None, params=None):
         """
-        Evaluate the perturbation composite at given eps and independent variable values.
+        Evaluate the perturbation expansion at given eps and independent variable values.
 
         Parameters
         ----------
@@ -529,14 +529,14 @@ def expand_lindstedt(problem, order: int = 2) -> LindstedtHierarchy:
     # ------------------------------------------------------------------
     # Step 6: assemble results
     # ------------------------------------------------------------------
-    h.composite = Add(*[known_u[u_funcs[k]] * eps**k for k in range(N + 1)])
+    h.expansion = Add(*[known_u[u_funcs[k]] * eps**k for k in range(N + 1)])
 
     omega_expr = omega0 + sum(
         eps**k * h.omega_values.get(omega_syms[k - 1], Integer(0))
         for k in range(1, N + 1)
     )
     h.omega_expansion = omega_expr
-    h.composite_t     = h.composite.subs(tau, omega_expr * t)
+    h.expansion_t     = h.expansion.subs(tau, omega_expr * t)
 
     h._problem = problem
     return h

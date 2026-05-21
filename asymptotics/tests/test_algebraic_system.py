@@ -56,15 +56,15 @@ class TestSymmetricSystem:
         assert self.sol["x"][3].solution == 0
 
     def test_symmetry(self):
-        """By symmetry x and y composites must be equal."""
-        diff = simplify(self.sol["x"].composite - self.sol["y"].composite)
+        """By symmetry x and y expansions must be equal."""
+        diff = simplify(self.sol["x"].expansion - self.sol["y"].expansion)
         assert diff == 0
 
-    def test_composites_correct(self):
+    def test_expansions_correct(self):
         e = self.sol.small_param
         expected = 1 - e/2 + e**2/8
         for var in ["x", "y"]:
-            diff = simplify(self.sol[var].composite - expected)
+            diff = simplify(self.sol[var].expansion - expected)
             assert diff == 0
 
     def test_hierarchy_length(self):

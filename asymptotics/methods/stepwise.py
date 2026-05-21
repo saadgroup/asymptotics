@@ -15,7 +15,7 @@ Usage
 >>>
 >>> sol.solve_all()                    # try all remaining
 >>>
->>> sol.composite                      # available once all solved
+>>> sol.expansion                      # available once all solved
 >>> sol.show()
 >>> sol.to_latex()
 >>> sol.eval(eps=0.1, at=t_vals)
@@ -97,6 +97,11 @@ class StepwiseOrderEntry:
                 func = h._u_funcs[j]
                 sol  = h.entries[j].particular_solution
                 ode_expr = ode_expr.subs(func, sol)
+        # Evaluate any Derivative objects that became concrete after substitution
+        # (e.g. Derivative(4*eta - 4*eta**2, eta, 4) → 0).
+        # SymPy's .subs() replaces the function body but leaves the Derivative
+        # wrapper unevaluated; .doit() resolves it.
+        ode_expr = ode_expr.doit()
         ode_expr = expand(ode_expr)
         ode_expr = expand(expand(ode_expr.rewrite(_exp)).rewrite(_cos))
         return Eq(ode_expr, 0)
@@ -289,7 +294,7 @@ class StepwiseHierarchy:
     sol[k].solve() or sol[k].set_solution(expr).
 
     Once all orders are solved, the full standard API is available:
-    sol.composite, sol.show(), sol.to_latex(), sol.eval(), sol.compare_numeric()
+    sol.expansion, sol.show(), sol.to_latex(), sol.eval(), sol.compare_numeric()
     """
 
     def __init__(self):
@@ -302,7 +307,7 @@ class StepwiseHierarchy:
         self._u_funcs        = []
         self._known_solutions = {}   # u_k func -> particular solution expr
         self._n_orders       = 0
-        self.composite       = None  # set after finalize
+        self.expansion       = None  # set after finalize
 
     def __getitem__(self, k: int) -> StepwiseOrderEntry:
         if k < 0 or k >= len(self.entries):
@@ -359,15 +364,15 @@ class StepwiseHierarchy:
             )
 
     def _finalize(self):
-        """Assemble composite once all orders are solved."""
+        """Assemble expansion once all orders are solved."""
         eps = self.small_param
-        self.composite = Add(*[
+        self.expansion = Add(*[
             self.entries[k].particular_solution * eps**k
             for k in range(len(self.entries))
         ])
-        # Also set composite_t for Lindstedt compatibility
-        self.composite_t = self.composite
-        print(f"\n  ✓  All orders solved. composite is now available.\n")
+        # Also set expansion_t for Lindstedt compatibility
+        self.expansion_t = self.expansion
+        print(f"\n  ✓  All orders solved. expansion is now available.\n")
 
     def _apply_conditions(self, gen_expr, k, t):
         """Apply conditions to fix integration constants."""
@@ -465,8 +470,8 @@ class StepwiseHierarchy:
         h._method       = self._method
         h._problem_type = self._problem_type
         h._problem      = self._problem
-        h.composite     = self.composite
-        h.composite_t   = self.composite
+        h.expansion     = self.expansion
+        h.expansion_t   = self.expansion
         for e in self.entries:
             entry = ODEOrderEntry(
                 order               = e.order,
@@ -559,14 +564,14 @@ def _show_stepwise(h, mode="auto"):
                 + _lx(e.particular_solution)
             ))
 
-    # Show composite if all solved
-    if h.n_solved == n_total and h.composite is not None:
+    # Show expansion if all solved
+    if h.n_solved == n_total and h.expansion is not None:
         display(HTML(
-            "<div style='margin-top:10px;font-weight:600;'>Composite:</div>"
+            "<div style='margin-top:10px;font-weight:600;'>Expansion:</div>"
         ))
         remainder = r'\mathcal{O}(\varepsilon^{' + str(n_total) + r'})'
         display(Math(
-            r'\boxed{u = ' + _lx(h.composite) + r' + ' + remainder + r'}'
+            r'\boxed{u = ' + _lx(h.expansion) + r' + ' + remainder + r'}'
         ))
 
 
@@ -589,8 +594,8 @@ def _show_text(h):
         if e.is_solved:
             print(f"    Solution: {e.symbol} = {e.particular_solution}")
 
-    if h.composite is not None:
-        print(f"\n  Composite: {h.composite}")
+    if h.expansion is not None:
+        print(f"\n  Expansion: {h.expansion}")
     print("=" * width)
 
 

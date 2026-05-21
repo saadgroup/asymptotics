@@ -1,7 +1,7 @@
 """
 asymptotics.display.boundary_layer_display
 ========================================
-Rich display for BoundaryLayerHierarchy — shows outer, inner, composite.
+Rich display for BoundaryLayerHierarchy — shows outer, inner, expansion.
 """
 
 from sympy import latex, Symbol, Eq
@@ -105,10 +105,10 @@ def _show_jupyter(h, display, Math, HTML):
         + _lx(h.match, eps)
     ))
 
-    # ── Composite ──
+    # ── Expansion ──
     display(HTML(
         "<div style='margin-top:12px;font-weight:600;border-left:3px solid #7F77DD;"
-        "padding-left:8px;'>Composite Solution</div>"
+        "padding-left:8px;'>Expansion Solution</div>"
     ))
     display(HTML(
         "<div style='font-size:0.85em;color:#666;margin:2px 0 4px 12px;'>"
@@ -116,7 +116,7 @@ def _show_jupyter(h, display, Math, HTML):
     ))
     display(Math(
         r"\boxed{u^{\text{comp}}(" + _lx(x, eps) + r") = "
-        + _lx(h.composite, eps) + r"}"
+        + _lx(h.expansion, eps) + r"}"
     ))
 
 
@@ -144,7 +144,7 @@ def _show_text(h):
     print(f"\n── Matching ────────────────────────────────────────")
     print(f"  lim_{{ξ→∞}} U(ξ) = u_out(layer) = {h.match}")
 
-    print(f"\n── Composite ───────────────────────────────────────")
+    print(f"\n── Expansion ───────────────────────────────────────")
     print(f"  u_comp(x) = u_out + u_in - match")
-    print(f"            = {h.composite}")
+    print(f"            = {h.expansion}")
     print("=" * width)

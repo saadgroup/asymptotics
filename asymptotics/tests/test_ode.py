@@ -177,9 +177,9 @@ class TestFirstOrderIVP:
         """u_0 = e^{-t}"""
         assert simplify(self.sol[0].particular_solution - exp(-t)) == 0
 
-    def test_composite_at_zero(self):
-        """Composite at t=0 should equal 1 for any eps."""
-        val = self.sol.composite.subs(t, 0)
+    def test_expansion_at_zero(self):
+        """Expansion at t=0 should equal 1 for any eps."""
+        val = self.sol.expansion.subs(t, 0)
         assert simplify(val - 1) == 0
 
     def test_hierarchy_length(self):

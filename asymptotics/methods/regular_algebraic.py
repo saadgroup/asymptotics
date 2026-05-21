@@ -10,7 +10,7 @@ Algorithm
 3. Taylor-expand in eps around eps=0 and collect coefficients of eps^k
 4. At each order k, solve the resulting polynomial equation for x_k
    (previous x_j for j<k are already known and substituted in)
-5. Assemble the composite expansion
+5. Assemble the expansion expansion
 
 Design principles
 -----------------
@@ -276,11 +276,11 @@ def expand_regular_algebraic(
         h.entries.append(entry)
 
     # ------------------------------------------------------------------
-    # Step 6: assemble composite expansion
+    # Step 6: assemble expansion expansion
     # ------------------------------------------------------------------
     from sympy import Integer as _Int
-    composite_terms = [known.get(x_syms[k], _Int(0)) * gauge_seq[k] for k in range(N + 1)]
-    h.composite = Add(*composite_terms)
+    expansion_terms = [known.get(x_syms[k], _Int(0)) * gauge_seq[k] for k in range(N + 1)]
+    h.expansion = Add(*expansion_terms)
 
     h._problem = problem
     return h

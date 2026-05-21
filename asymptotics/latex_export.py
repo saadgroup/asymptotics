@@ -64,7 +64,7 @@ def to_latex(hierarchy, environment='align', show_orders=False,
         Default 'align'.
     show_orders : bool
         If True, show each order u_k separately in addition to
-        the composite. Default False.
+        the expansion. Default False.
     filename : str, optional
         If given, write output to this file. Otherwise print to console.
 
@@ -142,8 +142,8 @@ def _latex_algebraic(h, environment, show_orders):
         ))
         lines.append("\n")
 
-    lines.append(_comment("Composite expansion"))
-    comp = _eps_latex(h.composite, eps)
+    lines.append(_comment("Expansion expansion"))
+    comp = _eps_latex(h.expansion, eps)
     remainder = _order_remainder(N + 1)
     lines.append(_wrap(
         f"  {dep}(\\varepsilon) &= {comp} + {remainder}",
@@ -178,8 +178,8 @@ def _latex_ode(h, environment, show_orders):
         lines.append(_wrap(" \\\\\n".join(order_lines), environment))
         lines.append("\n")
 
-    lines.append(_comment("Composite expansion"))
-    comp = _eps_latex(h.composite, eps)
+    lines.append(_comment("Expansion expansion"))
+    comp = _eps_latex(h.expansion, eps)
     remainder = _order_remainder(N + 1)
     lines.append(_wrap(
         f"  {dep}({t},\\varepsilon) &= {comp} + {remainder}",
@@ -232,18 +232,18 @@ def _latex_lindstedt(h, environment, show_orders):
         lines.append(_wrap(" \\\\\n".join(order_lines), environment))
         lines.append("\n")
 
-    # Composite in tau
-    lines.append(_comment("Composite solution (in strained time tau)"))
-    comp_tau = _eps_latex(h.composite, eps)
+    # Expansion in tau
+    lines.append(_comment("Expansion solution (in strained time tau)"))
+    comp_tau = _eps_latex(h.expansion, eps)
     lines.append(_wrap(
         f"  {dep}(\\tau,\\varepsilon) &= {comp_tau} + {remainder}",
         environment
     ))
     lines.append("\n")
 
-    # Composite in t
-    lines.append(_comment(f"Composite solution (in physical time {t})"))
-    comp_t = _eps_latex(h.composite_t, eps)
+    # Expansion in t
+    lines.append(_comment(f"Expansion solution (in physical time {t})"))
+    comp_t = _eps_latex(h.expansion_t, eps)
     lines.append(_wrap(
         f"  {dep}({t},\\varepsilon) &= {comp_t} + {remainder}",
         environment
@@ -280,9 +280,9 @@ def _latex_multiple_scales(h, environment, show_orders):
     ))
     lines.append("\n")
 
-    # Composite in t
-    lines.append(_comment("Composite solution"))
-    comp_t = _eps_latex(h.composite_t, eps)
+    # Expansion in t
+    lines.append(_comment("Expansion solution"))
+    comp_t = _eps_latex(h.expansion_t, eps)
     remainder = _order_remainder(N + 1)
     lines.append(_wrap(
         f"  {dep}({t},\\varepsilon) &= {comp_t} + {remainder}",
@@ -330,9 +330,9 @@ def _latex_boundary_layer(h, environment):
     lines.append(_comment(f"Matching value: {match_str}"))
     lines.append("\n")
 
-    # Composite
-    lines.append(_comment("Composite solution (Van Dyke rule)"))
-    comp_str = _eps_latex(h.composite, eps)
+    # Expansion
+    lines.append(_comment("Expansion solution (Van Dyke rule)"))
+    comp_str = _eps_latex(h.expansion, eps)
     lines.append(_wrap(
         f"  u^{{\\text{{comp}}}}({x},\\varepsilon) &= {comp_str}",
         environment
@@ -367,8 +367,8 @@ def _latex_ode_system(h, environment, show_orders):
             lines.append(_wrap(" \\\\\n".join(order_lines), environment))
             lines.append("\n")
 
-        lines.append(_comment(f"Composite: {var}"))
-        comp = _eps_latex(vh.composite, eps)
+        lines.append(_comment(f"Expansion: {var}"))
+        comp = _eps_latex(vh.expansion, eps)
         remainder = _order_remainder(N + 1)
         lines.append(_wrap(
             f"  {var}(t,\\varepsilon) &= {comp} + {remainder}",

@@ -24,7 +24,7 @@ Algorithm
 
 4. Matching: inner limit as xi->inf must equal outer limit at boundary.
 
-5. Composite: u_comp = u_outer + u_inner - u_match
+5. Expansion: u_comp = u_outer + u_inner - u_match
 
 Each step is stored for inspection.
 """
@@ -51,7 +51,7 @@ class BoundaryLayerHierarchy:
     inner           : Expr   — inner solution U(xi)
     inner_xi        : Expr   — inner in original variable: U((x-a)/eps)
     match           : Expr   — matching value (constant)
-    composite       : Expr   — u_out + U(xi) - match, with xi substituted
+    expansion       : Expr   — u_out + U(xi) - match, with xi substituted
     layer_location  : str    — 'x=a' or 'x=b'
     layer_var       : Symbol — the stretched coordinate xi
     outer_bc        : str    — which BC the outer solution satisfies
@@ -66,7 +66,7 @@ class BoundaryLayerHierarchy:
         self.inner          = None
         self.inner_xi       = None
         self.match          = None
-        self.composite      = None
+        self.expansion      = None
         self.layer_location = None
         self.layer_var      = None
         self.outer_ode      = None
@@ -102,10 +102,10 @@ class BoundaryLayerHierarchy:
         -------
         dict with keys:
             't' or 'x'    : ndarray — evaluation points
-            'u_pert'      : ndarray — perturbation composite
+            'u_pert'      : ndarray — perturbation expansion
             'u_numerical' : ndarray — numerical solution
             'fig'         : matplotlib Figure
-            (boundary layer also returns 'u_outer', 'u_inner', 'u_composite')
+            (boundary layer also returns 'u_outer', 'u_inner', 'u_expansion')
         """
         from asymptotics.numerics import compare_numeric
         problem = getattr(self, '_problem', None)
@@ -142,7 +142,7 @@ class BoundaryLayerHierarchy:
 
     def eval(self, eps, at=None, params=None):
         """
-        Evaluate the perturbation composite at given eps and independent variable values.
+        Evaluate the perturbation expansion at given eps and independent variable values.
 
         Parameters
         ----------
@@ -429,12 +429,12 @@ def expand_boundary_layer(problem, order: int = 0) -> BoundaryLayerHierarchy:
     h.inner_xi  = inner_particular.subs(xi, xi_expr)
 
     # ------------------------------------------------------------------
-    # Step 4: Composite solution
+    # Step 4: Expansion solution
     # u_comp = u_outer(x) + U(xi) - match_value
     # with xi = xi_expr
     # ------------------------------------------------------------------
-    composite = outer_expr + inner_particular.subs(xi, xi_expr) - outer_at_layer
-    h.composite = simplify(composite)
+    expansion = outer_expr + inner_particular.subs(xi, xi_expr) - outer_at_layer
+    h.expansion = simplify(expansion)
 
     h._problem = problem
     return h

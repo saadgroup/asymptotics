@@ -166,7 +166,9 @@ class AlgebraicEquation(PerturbationEquation):
 
 import re as _re
 
-_INDEP_CANDIDATES = {'x', 'y', 'z', 't'}
+_INDEP_CANDIDATES = {'x', 'y', 'z', 't', 'r'}
+
+# Single definition — used by both inference and parameter-detection helpers.
 _MATH_NAMES = {
     'sin','cos','exp','log','tan','cot','sec','csc',
     'sqrt','pi','E','I','oo','Abs','sign','floor','ceiling',
@@ -175,9 +177,16 @@ _MATH_NAMES = {
 }
 
 def _infer_dependent(conditions):
-    """Extract dependent variable name from condition strings."""
+    """Extract dependent variable name from condition strings.
+
+    Skips ``lim(...)`` conditions — they start with the keyword 'lim', not
+    the dependent variable name, and would cause a false match.
+    """
     for cond in conditions:
-        m = _re.match(r"^([a-zA-Z_]\w*)", cond.strip())
+        stripped = cond.strip()
+        if stripped.lower().startswith('lim('):
+            continue
+        m = _re.match(r"^([a-zA-Z_]\w*)", stripped)
         if m:
             return m.group(1)
     raise ValueError(
@@ -233,13 +242,6 @@ def _params_error(params, method='eval', has_at=False):
         f"  Provide values:\n"
         f"    sol.{method}(eps=..{at_arg}, params={{{param_dict}}})\n"
     )
-
-_MATH_NAMES = {
-    'sin','cos','exp','log','tan','cot','sec','csc',
-    'sqrt','pi','E','I','oo','Abs','sign','floor','ceiling',
-    'sinh','cosh','tanh','asin','acos','atan','atan2',
-    'lim',  # limit condition keyword
-}
 
 def _detect_params(eq_str, dependent, independent, small_param):
     """
@@ -521,7 +523,7 @@ class ODE(PerturbationEquation):
         >>> sol[1].solve()
         >>> sol.solve_all()                     # try all remaining
         >>>
-        >>> sol.composite                       # available once all solved
+        >>> sol.expansion                       # available once all solved
         >>> sol.eval(eps=0.1, at=eta_vals)
         """
         self._validate_order(order, "begin_expansion")
@@ -633,7 +635,7 @@ class AlgebraicSystem:
     ... )
     >>> sol = sys.expand_regular(order=3)
     >>> sol.show()
-    >>> sol["x"].composite
+    >>> sol["x"].expansion
     >>> sol["y"][1].solution
     """
 

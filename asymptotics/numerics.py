@@ -127,7 +127,7 @@ def _compare_algebraic(h, eps_list, n_points=100, problem=None, **kwargs):
     eps_vals = np.array(sorted(eps_list))
 
     pert_vals = np.array([
-        float(h.composite.subs(eps_sym, ev).subs(kwargs.get('param_subs', {}))) for ev in eps_vals
+        float(h.expansion.subs(eps_sym, ev).subs(kwargs.get('param_subs', {}))) for ev in eps_vals
     ])
 
     num_vals = []
@@ -195,7 +195,7 @@ def _compare_ode(h, eps_list, plot_range=None, n_points=300, problem=None, **kwa
 
     for i, eps_val in enumerate(eps_list):
         color   = colors[i % len(colors)]
-        comp_fn = lambdify(t_sym, h.composite.subs(eps_sym, eps_val).subs(kwargs.get("param_subs", {})), "numpy")
+        comp_fn = lambdify(t_sym, h.expansion.subs(eps_sym, eps_val).subs(kwargs.get("param_subs", {})), "numpy")
         u_pert  = np.real(np.array([complex(comp_fn(ti)) for ti in t_vals]))
 
         if h._problem_type == 'ivp':
@@ -289,10 +289,10 @@ def _compare_ode_oscillator(h, eps_list, plot_range=None, n_points=500,
     for i, eps_val in enumerate(eps_list):
         color = colors[i % len(colors)]
 
-        if hasattr(h, 'composite_t'):
-            comp_expr = h.composite_t.subs(eps_sym, eps_val)
+        if hasattr(h, 'expansion_t'):
+            comp_expr = h.expansion_t.subs(eps_sym, eps_val)
         else:
-            comp_expr = h.composite.subs(eps_sym, eps_val)
+            comp_expr = h.expansion.subs(eps_sym, eps_val)
 
         comp_fn = lambdify(t_sym, comp_expr, 'numpy')
         try:
@@ -335,7 +335,7 @@ def _compare_ode_oscillator(h, eps_list, plot_range=None, n_points=500,
 def _compare_boundary_layer(h, eps_list, n_points=400, problem=None, **kwargs):
     """
     Compare boundary layer expansion against solve_bvp.
-    Shows outer, inner, AND composite. One subplot per eps value.
+    Shows outer, inner, AND expansion. One subplot per eps value.
     """
     import matplotlib.pyplot as plt
 
@@ -362,24 +362,24 @@ def _compare_boundary_layer(h, eps_list, n_points=400, problem=None, **kwargs):
 
         u_outer = _eval(h.outer)
         u_inner = _eval(h.inner_xi)
-        u_comp  = _eval(h.composite)
+        u_comp  = _eval(h.expansion)
 
         rhs_fn, bc_fn, _, __ = _build_bvp_rhs_bc(h, eps_val, problem, [0, 1])
         x_num = _layer_aware_grid(eps_val, layer_side, n_points)
         y0    = np.zeros((2, len(x_num)))
-        y0[0] = np.real(_eval_at(h.composite, eps_sym, eps_val, x_sym, x_num))
+        y0[0] = np.real(_eval_at(h.expansion, eps_sym, eps_val, x_sym, x_num))
 
         from scipy.integrate import solve_bvp as _solve_bvp
         sol = _solve_bvp(rhs_fn, bc_fn, x_num, y0, tol=1e-6, max_nodes=10000)
         if not sol.success:
             x_num = np.linspace(0, 1, 200)
             y0    = np.zeros((2, 200))
-            y0[0] = np.real(_eval_at(h.composite, eps_sym, eps_val, x_sym, x_num))
+            y0[0] = np.real(_eval_at(h.expansion, eps_sym, eps_val, x_sym, x_num))
             sol   = _solve_bvp(rhs_fn, bc_fn, x_num, y0, tol=1e-5, max_nodes=10000)
         u_num = sol.sol(x_vals)[0]
 
         ax.plot(x_vals, u_num,   'k-',   lw=2,   label='Exact', alpha=0.9)
-        ax.plot(x_vals, u_comp,  'ro--', lw=1.5, ms=4, markevery=25, label='Composite')
+        ax.plot(x_vals, u_comp,  'ro--', lw=1.5, ms=4, markevery=25, label='Expansion')
         ax.plot(x_vals, u_outer, 'b:',   lw=2,   label='Outer')
         ax.plot(x_vals, u_inner, 'g-.',  lw=1.8, label='Inner', alpha=0.85)
 
@@ -395,7 +395,7 @@ def _compare_boundary_layer(h, eps_list, n_points=400, problem=None, **kwargs):
 
         results[eps_val] = {
             'u_outer': u_outer, 'u_inner': u_inner,
-            'u_composite': u_comp, 'u_numerical': u_num,
+            'u_expansion': u_comp, 'u_numerical': u_num,
         }
 
     plt.suptitle(f'Matched Asymptotic Expansions', fontsize=11, y=1.02)
@@ -450,7 +450,7 @@ def _compare_ode_system(h, eps_list, plot_range=None, n_points=300,
 
         for j, var in enumerate(variables):
             ax = axes[0][j]
-            fn = lambdify(t_sym, h[var].composite.subs(eps_sym, eps_val), 'numpy')
+            fn = lambdify(t_sym, h[var].expansion.subs(eps_sym, eps_val), 'numpy')
             try:
                 u_pert = np.real(np.array([complex(fn(ti)) for ti in t_vals]))
             except Exception:
@@ -580,7 +580,7 @@ def _compare_algebraic_system(h, eps_list, problem=None, **kwargs):
     for j, var in enumerate(variables):
         vh = h.hierarchies[var]
         pert_vals = np.array([
-            complex(vh.composite.subs(eps_sym, ev).subs(kwargs.get('param_subs', {})).evalf()).real for ev in eps_vals
+            complex(vh.expansion.subs(eps_sym, ev).subs(kwargs.get('param_subs', {})).evalf()).real for ev in eps_vals
         ])
 
         axes[0][j].plot(eps_vals, pert_vals, 'ro--', lw=1.5, ms=5,

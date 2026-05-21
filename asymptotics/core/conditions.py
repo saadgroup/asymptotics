@@ -227,12 +227,15 @@ def parse_and_validate_conditions(
     Returns (parsed_conditions, problem_type)
     """
     if len(conditions) != ode_order:
+        _hint = (
+            "\n  Hint: for a 2nd-order ODE you need 2 conditions, e.g.:"
+            "\n    IVP: [\"u(0) = 1\", \"u'(0) = 0\"]"
+            "\n    BVP: [\"u(0) = 0\", \"u(1) = 1\"]"
+        ) if ode_order == 2 else ""
         raise ConditionError(
             f"\n\n  {len(conditions)} condition(s) provided but the ODE is "
-            f"order {ode_order} — need exactly {ode_order}.\n\n"
-            f"  {'Hint: for a 2nd-order ODE you need 2 conditions, e.g.:' if ode_order == 2 else ''}\n"
-            f"  {'  IVP: [\"u(0) = 1\", \"u' + chr(39) + '(0) = 0\"]' if ode_order == 2 else ''}\n"
-            f"  {'  BVP: [\"u(0) = 0\", \"u(1) = 1\"]' if ode_order == 2 else ''}\n"
+            f"order {ode_order} — need exactly {ode_order}.\n"
+            f"{_hint}\n"
         )
 
     # Parse all conditions

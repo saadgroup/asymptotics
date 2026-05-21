@@ -39,14 +39,14 @@ class ODEHierarchy:
     Attributes
     ----------
     entries : list of ODEOrderEntry
-    composite : Expr  — the assembled expansion
+    expansion : Expr  — the assembled expansion
     small_param : Symbol
     independent : Symbol
     """
 
     def __init__(self):
         self.entries      = []
-        self.composite    = None
+        self.expansion    = None
         self.small_param  = None
         self.independent  = None
         self._method      = ""
@@ -79,10 +79,10 @@ class ODEHierarchy:
         -------
         dict with keys:
             't' or 'x'    : ndarray — evaluation points
-            'u_pert'      : ndarray — perturbation composite
+            'u_pert'      : ndarray — perturbation expansion
             'u_numerical' : ndarray — numerical solution
             'fig'         : matplotlib Figure
-            (boundary layer also returns 'u_outer', 'u_inner', 'u_composite')
+            (boundary layer also returns 'u_outer', 'u_inner', 'u_expansion')
         """
         from asymptotics.numerics import compare_numeric
         problem = getattr(self, '_problem', None)
@@ -119,7 +119,7 @@ class ODEHierarchy:
 
     def eval(self, eps, at=None, params=None):
         """
-        Evaluate the perturbation composite at given eps and independent variable values.
+        Evaluate the perturbation expansion at given eps and independent variable values.
 
         Parameters
         ----------
@@ -434,9 +434,9 @@ def expand_regular_ode(problem, order: int = 2, gauge=None) -> ODEHierarchy:
         h.entries.append(entry)
 
     # ------------------------------------------------------------------
-    # Step 7: composite expansion
+    # Step 7: expansion expansion
     # ------------------------------------------------------------------
-    h.composite = Add(*[known_solutions[u_funcs[k]] * gauge_seq[k] for k in range(N + 1)])
+    h.expansion = Add(*[known_solutions[u_funcs[k]] * gauge_seq[k] for k in range(N + 1)])
 
     h._problem = problem
     return h

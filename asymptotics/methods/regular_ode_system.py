@@ -48,7 +48,7 @@ class ODESystemVarHierarchy:
     def __init__(self, name):
         self.name      = name
         self.entries   = []
-        self.composite = None
+        self.expansion = None
 
     def __getitem__(self, order: int):
         return self.entries[order]
@@ -66,9 +66,9 @@ class ODESystemHierarchy:
     Result of a regular perturbation expansion for a coupled ODE system.
 
     Access per-variable results via:
-        sol["u"].composite
+        sol["u"].expansion
         sol["u"][k].particular_solution
-        sol["v"].composite
+        sol["v"].expansion
 
     Attributes
     ----------
@@ -125,7 +125,7 @@ class ODESystemHierarchy:
 
     def eval(self, eps, at=None, params=None):
         """
-        Evaluate the perturbation composite at given eps and independent variable values.
+        Evaluate the perturbation expansion at given eps and independent variable values.
 
         Parameters
         ----------
@@ -342,10 +342,10 @@ def expand_regular_ode_system(problem, order: int = 2) -> ODESystemHierarchy:
             h.hierarchies[dep].entries.append(entry)
 
     # ------------------------------------------------------------------
-    # Assemble composites
+    # Assemble expansions
     # ------------------------------------------------------------------
     for dep in deps:
-        h.hierarchies[dep].composite = Add(*[
+        h.hierarchies[dep].expansion = Add(*[
             known[u_funcs[dep][k]] * eps**k for k in range(N + 1)
         ])
 

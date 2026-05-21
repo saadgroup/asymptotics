@@ -102,7 +102,7 @@ def _show_jupyter(h, orders, display, Math, HTML):
                 f"Consider Lindstedt–Poincaré or multiple scales.</div>"
             ))
 
-    # Composite
+    # Expansion
     max_order = max(e.order for e in h.entries)
     pieces = []
     for entry in sorted(h.entries, key=lambda e: e.order):
@@ -163,5 +163,5 @@ def _show_text(h, orders):
         print()
 
     print("-" * width)
-    print(f"  Composite: {dep}(t,ε) = {h.composite}")
+    print(f"  Expansion: {dep}(t,ε) = {h.expansion}")
     print("=" * width)

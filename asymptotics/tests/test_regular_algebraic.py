@@ -32,9 +32,9 @@ class TestCubic:
     def test_order3(self):
         assert self.h[3].solution == Rational(1, 81)
 
-    def test_composite(self):
+    def test_expansion(self):
         e = self.h.small_param
-        diff = simplify(self.h.composite - (1 - e/3 + e**3/81))
+        diff = simplify(self.h.expansion - (1 - e/3 + e**3/81))
         assert diff == 0
 
     def test_hierarchy_length(self):
@@ -67,7 +67,7 @@ class TestQuadratic:
         e            = self.h.small_param
         exact        = (-e + sqrt(e**2 + 4)) / 2
         exact_series = series(exact, e, 0, 4).removeO()
-        diff = simplify(self.h.composite - exact_series)
+        diff = simplify(self.h.expansion - exact_series)
         assert diff == 0
 
     def test_hierarchy_length(self):
@@ -93,7 +93,7 @@ class TestQuadraticNegativeRoot:
         e            = self.h.small_param
         exact        = (-e - sqrt(e**2 + 4)) / 2
         exact_series = series(exact, e, 0, 3).removeO()
-        diff = simplify(self.h.composite - exact_series)
+        diff = simplify(self.h.expansion - exact_series)
         assert diff == 0
 
 
@@ -113,9 +113,9 @@ class TestLinear:
     def test_order2_zero(self):
         assert self.h[2].solution == 0
 
-    def test_composite(self):
+    def test_expansion(self):
         e    = self.h.small_param
-        diff = simplify(self.h.composite - (1 - e))
+        diff = simplify(self.h.expansion - (1 - e))
         assert diff == 0
 
 

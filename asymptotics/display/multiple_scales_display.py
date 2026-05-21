@@ -142,16 +142,16 @@ def _show_jupyter(h, orders, display, Math, HTML):
         + r", \qquad B(T_1) = " + _latex(h.amplitude_B, h.small_param)
     ))
 
-    # Composite in t
+    # Expansion in t
     display(HTML(
-        "<div style='margin-top:8px;font-weight:600;'>Composite expansion:</div>"
+        "<div style='margin-top:8px;font-weight:600;'>Expansion expansion:</div>"
     ))
     dep_sym = Symbol(dep)
     max_order = max(e.order for e in h.entries)
     remainder = r"+ \,\mathcal{O}\!\left(\varepsilon^{%d}\right)" % (max_order + 1)
     display(Math(
         r"\boxed{" + dep + r"(t,\varepsilon) = "
-        + _latex(h.composite_t, h.small_param) + " " + remainder + r"}"
+        + _latex(h.expansion_t, h.small_param) + " " + remainder + r"}"
     ))
 
 
@@ -189,6 +189,6 @@ def _show_text(h, orders):
     print(f"\n  Amplitude (solved):")
     print(f"    A(T₁) = {h.amplitude_A}")
     print(f"    B(T₁) = {h.amplitude_B}")
-    print(f"\n  Composite:")
-    print(f"    {dep}(t,ε) = {h.composite_t}")
+    print(f"\n  Expansion:")
+    print(f"    {dep}(t,ε) = {h.expansion_t}")
     print("=" * width)

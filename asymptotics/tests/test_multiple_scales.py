@@ -65,23 +65,23 @@ class TestDampedOscillator:
         eq_B = self.sol.entries[1].solvability_B
         assert eq_B is not None
 
-    def test_composite_matches_exact_leading(self):
-        """Composite at order 1 should match e^{-eps*t/2}*cos(t)"""
+    def test_expansion_matches_exact_leading(self):
+        """Expansion at order 1 should match e^{-eps*t/2}*cos(t)"""
         t = self.t
         eps = self.eps
         expected = exp(-eps*t/2) * cos(t)
-        diff = simplify(self.sol.composite_t - expected)
+        diff = simplify(self.sol.expansion_t - expected)
         assert diff == 0
 
     def test_numerical_accuracy(self):
-        """Composite should match numerical solution for small eps."""
+        """Expansion should match numerical solution for small eps."""
         eps_val  = 0.1
         t_vals   = np.linspace(0, 20, 500)
         eps_sym  = self.sol.small_param
         t_sym    = self.sol.independent
 
         from sympy import lambdify
-        comp_fn = lambdify(t_sym, self.sol.composite_t.subs(eps_sym, eps_val), 'numpy')
+        comp_fn = lambdify(t_sym, self.sol.expansion_t.subs(eps_sym, eps_val), 'numpy')
         u_pert  = comp_fn(t_vals)
 
         def rhs(t, y): return [y[1], -y[0] - eps_val*y[1]]

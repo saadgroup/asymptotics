@@ -203,7 +203,7 @@ def expand_regular_system(problem, order: int = 3) -> SystemHierarchy:
             )
             h.entries.append(entry)
 
-        h.composite = Add(*[known[order_syms[name][k]] * eps**k for k in range(N + 1)])
+        h.expansion = Add(*[known[order_syms[name][k]] * eps**k for k in range(N + 1)])
         h.collected = {k: coeffs[k][dep_names.index(name)] for k in range(N + 1)}
         sys_hier.hierarchies[name] = h
 

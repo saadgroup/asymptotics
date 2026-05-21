@@ -43,15 +43,15 @@ class OrderHierarchy:
         The original equation after substituting the ansatz.
     collected : dict
         Maps eps**k -> the coefficient expression (the equation at that order).
-    composite : Expr
-        The assembled composite expansion x = x0 + eps*x1 + ...
+    expansion : Expr
+        The assembled expansion expansion x = x0 + eps*x1 + ...
     """
 
     def __init__(self):
         self.entries               : List[OrderEntry] = []
         self.substituted_equation  : Optional[Expr]   = None
         self.collected             : Dict[int, Expr]  = {}   # order -> coeff expr
-        self.composite             : Optional[Expr]   = None
+        self.expansion             : Optional[Expr]   = None
         self.small_param           : Optional[Symbol] = None  # the eps symbol
         self._method               : str              = ""
         self._problem_repr         : str              = ""
@@ -83,7 +83,7 @@ class OrderHierarchy:
         """
         Compare algebraic perturbation expansion against scipy root-finder.
 
-        Plots the perturbation composite vs the exact root as a function
+        Plots the perturbation expansion vs the exact root as a function
         of eps over the range [0, eps_max].
 
         Parameters
@@ -132,7 +132,7 @@ class OrderHierarchy:
 
     def eval(self, eps, at=None, params=None):
         """
-        Evaluate the perturbation composite at given eps and optional point array.
+        Evaluate the perturbation expansion at given eps and optional point array.
 
         Parameters
         ----------
@@ -169,14 +169,14 @@ class OrderHierarchy:
         from asymptotics.display.jupyter import show as _show
         _show(self, orders=orders, mode=mode)
 
-    def latex_composite(self) -> str:
-        return latex(self.composite)
+    def latex_expansion(self) -> str:
+        return latex(self.expansion)
 
     def latex_equations(self) -> List[str]:
         return [latex(e.equation) for e in self.entries]
 
     def _show_body(self, orders=None) -> None:
-        """Show order blocks and composite without title header.
+        """Show order blocks and expansion without title header.
         Used by SystemHierarchy to embed per-variable output."""
         from asymptotics.display.jupyter import _show_jupyter_body
         _show_jupyter_body(self, orders=orders)

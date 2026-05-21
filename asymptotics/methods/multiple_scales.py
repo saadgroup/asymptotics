@@ -21,7 +21,7 @@ Algorithm at each order k:
     5. Solve solvability ODEs with ICs from the original problem
     6. Substitute back and solve the de-secularized PDE for u_k
 
-The composite solution is then:
+The expansion solution is then:
     u(t, eps) = u_0(t, eps*t) + eps*u_1(t, eps*t) + ...
 """
 
@@ -46,8 +46,8 @@ class MultScalesHierarchy:
     Attributes
     ----------
     entries             : list of MultScalesOrderEntry
-    composite           : Expr  — u(T_0, T_1, eps) assembled
-    composite_t         : Expr  — u(t, eps) with T_0=t, T_1=eps*t
+    expansion           : Expr  — u(T_0, T_1, eps) assembled
+    expansion_t         : Expr  — u(t, eps) with T_0=t, T_1=eps*t
     amplitude_A         : Expr  — A(T_1) solved
     amplitude_B         : Expr  — B(T_1) solved
     solvability_odes    : list  — [Eq(dA/dT1, ...), Eq(dB/dT1, ...)]
@@ -59,8 +59,8 @@ class MultScalesHierarchy:
 
     def __init__(self):
         self.entries          = []
-        self.composite        = None
-        self.composite_t      = None
+        self.expansion        = None
+        self.expansion_t      = None
         self.amplitude_A      = None
         self.amplitude_B      = None
         self.solvability_odes = []
@@ -98,10 +98,10 @@ class MultScalesHierarchy:
         -------
         dict with keys:
             't' or 'x'    : ndarray — evaluation points
-            'u_pert'      : ndarray — perturbation composite
+            'u_pert'      : ndarray — perturbation expansion
             'u_numerical' : ndarray — numerical solution
             'fig'         : matplotlib Figure
-            (boundary layer also returns 'u_outer', 'u_inner', 'u_composite')
+            (boundary layer also returns 'u_outer', 'u_inner', 'u_expansion')
         """
         from asymptotics.numerics import compare_numeric
         problem = getattr(self, '_problem', None)
@@ -138,7 +138,7 @@ class MultScalesHierarchy:
 
     def eval(self, eps, at=None, params=None):
         """
-        Evaluate the perturbation composite at given eps and independent variable values.
+        Evaluate the perturbation expansion at given eps and independent variable values.
 
         Parameters
         ----------
@@ -515,21 +515,21 @@ def expand_multiple_scales(problem, order: int = 1) -> MultScalesHierarchy:
         ))
 
     # ------------------------------------------------------------------
-    # Step 5: assemble composite
+    # Step 5: assemble expansion
     # ------------------------------------------------------------------
     h.amplitude_A      = A_sol_expr
     h.amplitude_B      = B_sol_expr
     h.solvability_odes = solvability_odes
 
-    # Composite in (T0, T1)
+    # Expansion in (T0, T1)
     u0_part = u0_expr.subs(A, A_sol_expr).subs(B, B_sol_expr)
-    composite_T = u0_part
+    expansion_T = u0_part
     for k in range(1, N + 1):
-        composite_T = composite_T + eps**k * h.entries[k].particular_solution
-    h.composite = composite_T
+        expansion_T = expansion_T + eps**k * h.entries[k].particular_solution
+    h.expansion = expansion_T
 
-    # Composite in t: T0 -> t, T1 -> eps*t
-    h.composite_t = simplify(composite_T.subs([(T0, t), (T1, eps * t)]))
+    # Expansion in t: T0 -> t, T1 -> eps*t
+    h.expansion_t = simplify(expansion_T.subs([(T0, t), (T1, eps * t)]))
 
     h._problem = problem
     return h
