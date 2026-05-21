@@ -28,6 +28,7 @@ from sympy import (
     dsolve, solve, Eq, Add, Integer, sympify,
     exp as _exp, cos as _cos
 )
+from asymptotics.methods.regular_ode import _bc_value_at_order
 
 
 # ---------------------------------------------------------------------------
@@ -391,19 +392,20 @@ class StepwiseHierarchy:
             key=lambda s: int(str(s)[1:])
         )
 
+        eps = self.small_param
         cond_equations = []
         for cond in conds:
             if isinstance(cond, LimitCondition):
                 eq = _apply_limit_condition(
                     cond, gen_expr, t,
                     self._problem._dependent_name,
-                    deriv_syms, k
+                    deriv_syms, k, eps=eps
                 )
                 if eq is not None and eq is not True:
                     cond_equations.append(eq)
             else:
                 pt  = cond.point
-                val = cond.value if k == 0 else sympify(0)
+                val = _bc_value_at_order(cond.value, eps, k)
                 if cond.deriv_order == 0:
                     expr_at_pt = gen_expr.subs(t, pt)
                 else:

@@ -23,6 +23,30 @@ from sympy import (
     symbols as _symbols, sympify
 )
 
+
+def _bc_value_at_order(cond_value, eps, k):
+    """
+    Return the eps^k coefficient of a boundary-condition value.
+
+    If the value is plain (no eps), the standard rule applies:
+      k=0 → the value itself, k>0 → 0.
+    If the value contains eps (e.g. "1 + eps" or "eps**2"),
+      extract the appropriate coefficient via series expansion so
+      every order gets the right contribution.
+
+    Examples
+    --------
+    _bc_value_at_order(1,          eps, 0) → 1
+    _bc_value_at_order(1,          eps, 1) → 0
+    _bc_value_at_order(1 + eps,    eps, 0) → 1
+    _bc_value_at_order(1 + eps,    eps, 1) → 1
+    _bc_value_at_order(eps**2,     eps, 0) → 0
+    _bc_value_at_order(eps**2,     eps, 2) → 1
+    """
+    if eps in sympify(cond_value).free_symbols:
+        return series(sympify(cond_value), eps, 0, k + 2).coeff(eps, k)
+    return sympify(cond_value) if k == 0 else sympify(0)
+
 from asymptotics.core.hierarchy  import OrderHierarchy, OrderEntry
 from asymptotics.core.exceptions import (
     NoSmallParameterError,
@@ -172,7 +196,7 @@ class ODEOrderEntry:
 
 
 
-def _apply_limit_condition(cond, gen_expr, t_sym, dep_name, deriv_syms, order_k):
+def _apply_limit_condition(cond, gen_expr, t_sym, dep_name, deriv_syms, order_k, eps=None):
     """
     Apply a limit condition to the general solution at order k.
 
@@ -185,7 +209,7 @@ def _apply_limit_condition(cond, gen_expr, t_sym, dep_name, deriv_syms, order_k)
 
     var_sym   = Symbol(cond.var_str)
     lim_point = cond.point
-    lim_value = cond.value if order_k == 0 else sympify(0)
+    lim_value = _bc_value_at_order(cond.value, eps if eps is not None else sympify(0), order_k)
 
     # Preprocess: replace u\'\', u\' with d2u, du in expr_str
     expr_proc = _preprocess_ode_string(cond.expr_str, dep_name)
@@ -373,9 +397,9 @@ def expand_regular_ode(problem, order: int = 2, gauge=None) -> ODEHierarchy:
             key=lambda s: int(str(s)[1:])
         )
 
-        # Build order-k conditions
-        # At order 0: full condition value
-        # At order k>0: homogeneous (value = 0)
+        # Build order-k conditions.
+        # If a BC value contains eps (e.g. "u(0) = 1 + eps"), extract the
+        # eps^k coefficient so each order gets the correct contribution.
         from asymptotics.core.conditions import LimitCondition as _LimitCond
         cond_equations = []
         for cond in conds:
@@ -383,13 +407,13 @@ def expand_regular_ode(problem, order: int = 2, gauge=None) -> ODEHierarchy:
                 # Limit condition: lim(expr, var, point) = value
                 _eq = _apply_limit_condition(
                     cond, gen_expr, t, dep,
-                    problem._deriv_syms, k
+                    problem._deriv_syms, k, eps=eps
                 )
                 if _eq is not None and _eq is not True:
                     cond_equations.append(_eq)
             else:
                 pt  = cond.point
-                val = cond.value if k == 0 else sympify(0)
+                val = _bc_value_at_order(cond.value, eps, k)
                 if cond.deriv_order == 0:
                     expr_at_pt = gen_expr.subs(t, pt)
                 else:

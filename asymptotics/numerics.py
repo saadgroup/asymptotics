@@ -231,7 +231,7 @@ def _solve_ode_ivp(h, eps_val, plot_range, t_vals, problem, param_subs=None):
     from scipy.integrate import solve_ivp as _solve_ivp
 
     rhs_fn = _build_ode_rhs(h, eps_val, problem, param_subs=param_subs)
-    ics    = _get_ics(h, problem, param_subs=param_subs)
+    ics    = _get_ics(h, problem, eps_val=eps_val, param_subs=param_subs)
 
     sol = _solve_ivp(
         rhs_fn, plot_range, ics,
@@ -666,6 +666,11 @@ def _build_bvp_rhs_bc(h, eps_val, problem, x_range, param_subs=None):
     import warnings
 
     param_subs  = param_subs or {}
+    # Include eps -> eps_val in substitutions so BCs like "u(0) = 1 + eps" evaluate correctly
+    eps_subs = {}
+    if hasattr(h, 'small_param') and h.small_param is not None:
+        eps_subs = {h.small_param: eps_val}
+    all_bc_subs = {**eps_subs, **param_subs}
     delta       = 1e-4
     ode_order   = problem.ode_order
     point_conds = [c for c in problem.conditions if not getattr(c, 'is_limit', False)]
@@ -695,7 +700,7 @@ def _build_bvp_rhs_bc(h, eps_val, problem, x_range, param_subs=None):
     bc_by_point = {}  # {float_point: [(deriv_order, float_value), ...]}
     for c in point_conds:
         pt = float(c.point.evalf())
-        val = float(c.value.subs(param_subs) if hasattr(c.value, 'subs') else c.value)
+        val = float(c.value.subs(all_bc_subs) if hasattr(c.value, 'subs') else c.value)
         bc_by_point.setdefault(pt, []).append((c.deriv_order, val))
 
     pts_sorted = sorted(bc_by_point.keys())
@@ -751,9 +756,9 @@ def _build_bvp_rhs_bc(h, eps_val, problem, x_range, param_subs=None):
     return rhs_bvp, bc_bvp, a, b
 
 
-def _get_ics(h, problem, param_subs=None):
+def _get_ics(h, problem, eps_val=None, param_subs=None):
     """Extract initial conditions as a list [u0, u'0, ...].
-    Substitutes symbolic parameter values if provided.
+    Substitutes the eps value and any symbolic parameter values.
     """
     if problem is None:
         raise ValueError(
@@ -771,17 +776,22 @@ def _get_ics(h, problem, param_subs=None):
             UserWarning, stacklevel=4
         )
     conds = sorted([c for c in problem.conditions if not getattr(c, 'is_limit', False)], key=lambda c: c.deriv_order)
+    # Build a combined substitution that includes eps -> eps_val
+    eps_subs = {}
+    if eps_val is not None and hasattr(h, 'small_param') and h.small_param is not None:
+        eps_subs = {h.small_param: eps_val}
+    all_subs = {**eps_subs, **param_subs}
     ics = []
     for c in conds:
         if float(c.point.evalf()) == float(min(c.point for c in conds).evalf()):
-            val = c.value.subs(param_subs) if hasattr(c.value, 'subs') else c.value
+            val = c.value.subs(all_subs) if hasattr(c.value, 'subs') else c.value
             try:
                 ics.append(float(val))
             except Exception:
                 raise ValueError(
                     f"\n\n  Could not evaluate initial condition value: {c.value}\n"
-                    f"  After param substitution: {val}\n"
-                    f"  Provide values: sol.compare_numeric(eps=..., params={{...}})\n"
+                    f"  After substitution (eps={eps_val}, params={param_subs}): {val}\n"
+                    f"  Provide extra values: sol.compare_numeric(eps=..., params={{...}})\n"
                 )
     return ics
 
