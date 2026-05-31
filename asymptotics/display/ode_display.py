@@ -110,21 +110,30 @@ def _show_jupyter(h, orders, display, Math, HTML):
         val = entry.particular_solution
         if val == 0:
             continue
-        try:
-            is_neg = False  # ODEs rarely simplify to a known-sign expression
-        except Exception:
-            is_neg = False
 
-        val_latex = latex(val)
+        is_neg    = val.could_extract_minus_sign()
+        abs_val   = -val if is_neg else val
+        abs_latex = latex(abs_val)
+
         if k == 0:
-            term = val_latex
+            term = abs_latex
         elif k == 1:
-            term = r"\varepsilon \left(" + val_latex + r"\right)"
+            if abs_val.is_Add:
+                term = r"\varepsilon \left(" + abs_latex + r"\right)"
+            else:
+                term = r"\varepsilon\," + abs_latex
         else:
-            term = r"\varepsilon^{%d} \left(" % k + val_latex + r"\right)"
-        pieces.append(term)
+            if abs_val.is_Add:
+                term = r"\varepsilon^{%d} \left(" % k + abs_latex + r"\right)"
+            else:
+                term = r"\varepsilon^{%d}\," % k + abs_latex
+        pieces.append(("-" if is_neg else "+", term))
 
-    rhs       = " + ".join(pieces) if pieces else "0"
+    rhs_parts = []
+    for i, (sign, term) in enumerate(pieces):
+        rhs_parts.append(("-" + term if sign == "-" else term) if i == 0
+                         else sign + " " + term)
+    rhs       = " ".join(rhs_parts) if rhs_parts else "0"
     remainder = r"+ \,\mathcal{O}\!\left(\varepsilon^{%d}\right)" % (max_order + 1)
     display(Math(r"\boxed{" + dep + r"(t,\varepsilon) = " + rhs + " " + remainder + r"}"))
 

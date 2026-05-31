@@ -222,10 +222,7 @@ def _show_jupyter(h, orders, display, Math, HTML):
             continue
 
         # Determine sign and absolute value
-        try:
-            is_neg = float(val.evalf()) < 0
-        except Exception:
-            is_neg = False
+        is_neg = val.could_extract_minus_sign()
 
         abs_val    = -val if is_neg else val
         abs_latex  = _latex_eps(abs_val, h.small_param)
@@ -369,10 +366,7 @@ def _show_jupyter_body(h, orders=None):
         val = entry.solution
         if val == 0:
             continue
-        try:
-            is_neg = float(val.evalf()) < 0
-        except Exception:
-            is_neg = False
+        is_neg = val.could_extract_minus_sign()
         abs_val   = -val if is_neg else val
         abs_latex = _latex_eps(abs_val, h.small_param)
         if abs_val.is_Add:

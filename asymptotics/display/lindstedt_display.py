@@ -73,7 +73,9 @@ def _show_jupyter(h, orders, display, Math, HTML):
         ok_sym = h.entries[k].omega_k_sym
         ok_val = h.omega_values.get(ok_sym, Integer(0))
         if ok_val != 0:
-            omega_terms += r" + " + _eps_prefix(k) + r"\," + latex(ok_val)
+            ok_neg = ok_val.could_extract_minus_sign()
+            ok_abs = -ok_val if ok_neg else ok_val
+            omega_terms += (r" - " if ok_neg else r" + ") + _eps_prefix(k) + r"\," + latex(ok_abs)
     omega_terms += r" + \cdots"
     display(Math(
         r"\textbf{Frequency:} \quad \omega(\varepsilon) = " + omega_terms
@@ -132,16 +134,30 @@ def _show_jupyter(h, orders, display, Math, HTML):
         val = entry.particular_solution
         if val == 0:
             continue
-        val_latex = latex(val)
-        if k == 0:
-            term = val_latex
-        elif k == 1:
-            term = r"\varepsilon \left(" + val_latex + r"\right)"
-        else:
-            term = r"\varepsilon^{%d} \left(" % k + val_latex + r"\right)"
-        pieces.append(term)
 
-    rhs       = " + ".join(pieces) if pieces else "0"
+        is_neg    = val.could_extract_minus_sign()
+        abs_val   = -val if is_neg else val
+        abs_latex = latex(abs_val)
+
+        if k == 0:
+            term = abs_latex
+        elif k == 1:
+            if abs_val.is_Add:
+                term = r"\varepsilon \left(" + abs_latex + r"\right)"
+            else:
+                term = r"\varepsilon\," + abs_latex
+        else:
+            if abs_val.is_Add:
+                term = r"\varepsilon^{%d} \left(" % k + abs_latex + r"\right)"
+            else:
+                term = r"\varepsilon^{%d}\," % k + abs_latex
+        pieces.append(("-" if is_neg else "+", term))
+
+    rhs_parts = []
+    for i, (sign, term) in enumerate(pieces):
+        rhs_parts.append(("-" + term if sign == "-" else term) if i == 0
+                         else sign + " " + term)
+    rhs       = " ".join(rhs_parts) if rhs_parts else "0"
     remainder = r"+ \,\mathcal{O}\!\left(\varepsilon^{%d}\right)" % (max_order + 1)
 
     display(Math(

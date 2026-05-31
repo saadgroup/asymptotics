@@ -220,10 +220,7 @@ class SystemHierarchy:
                 val = entry.solution
                 if val == 0:
                     continue
-                try:
-                    is_neg = float(val.evalf()) < 0
-                except Exception:
-                    is_neg = False
+                is_neg = val.could_extract_minus_sign()
                 abs_val   = -val if is_neg else val
                 abs_latex = latex(abs_val)
                 if abs_val.is_Add:
