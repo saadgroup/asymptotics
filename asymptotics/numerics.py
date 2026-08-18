@@ -96,7 +96,173 @@ def compare_numeric(hierarchy, eps, params=None, filename=None, **kwargs):
     if filename is not None and 'fig' in result:
         result['fig'].savefig(filename, bbox_inches='tight')
 
+    # Attach quantitative error norms + solver settings (additive, backward-compatible)
+    try:
+        result['errors']   = _attach_error_norms(result)
+        result['settings'] = _solver_settings(hierarchy)
+    except Exception:
+        # Never let error-reporting break the primary comparison
+        pass
+
     return result
+
+
+# ---------------------------------------------------------------------------
+# Quantitative error norms
+# ---------------------------------------------------------------------------
+
+def error_norms(u_ref, u_approx, x=None):
+    """
+    Error between an approximation and a reference solution.
+
+    Parameters
+    ----------
+    u_ref : array_like
+        Reference (numerical) solution values.
+    u_approx : array_like
+        Approximate (perturbation) solution values, same shape as ``u_ref``.
+    x : array_like, optional
+        Grid on which the two solutions are sampled.  If given, the L2 norm is
+        the grid-independent RMS integral
+        :math:`\\sqrt{\\int (u_\\text{approx}-u_\\text{ref})^2\\,dx / (b-a)}`
+        (evaluated by the trapezoidal rule), so the reported value does not
+        depend on the number of sample points.  If omitted, the discrete RMS
+        over the samples is used.
+
+    Returns
+    -------
+    dict
+        ``{'L2', 'Linf', 'L2_rel', 'Linf_rel'}`` — absolute and relative
+        (normalised by the corresponding norm of ``u_ref``) errors.  ``NaN``
+        entries in either array are ignored.
+    """
+    u_ref    = np.asarray(u_ref, dtype=float)
+    u_approx = np.asarray(u_approx, dtype=float)
+    diff     = u_approx - u_ref
+    mask     = np.isfinite(diff) & np.isfinite(u_ref)
+    diff     = diff[mask]
+    ref      = u_ref[mask]
+    if diff.size == 0:
+        return {'L2': float('nan'), 'Linf': float('nan'),
+                'L2_rel': float('nan'), 'Linf_rel': float('nan')}
+
+    if x is not None:
+        xa = np.asarray(x, dtype=float)[mask]
+        order = np.argsort(xa)
+        xa, d_ord, r_ord = xa[order], diff[order], ref[order]
+        span = xa[-1] - xa[0]
+        _trapz = getattr(np, 'trapezoid', None) or np.trapz  # NumPy 2.x renamed trapz
+        if xa.size > 1 and span > 0:
+            L2     = np.sqrt(_trapz(d_ord**2, xa) / span)
+            L2_ref = np.sqrt(_trapz(r_ord**2, xa) / span)
+        else:
+            L2     = np.sqrt(np.mean(diff**2))
+            L2_ref = np.sqrt(np.mean(ref**2))
+    else:
+        L2     = np.sqrt(np.mean(diff**2))
+        L2_ref = np.sqrt(np.mean(ref**2))
+
+    Linf     = float(np.max(np.abs(diff)))
+    Linf_ref = float(np.max(np.abs(ref)))
+    return {
+        'L2'      : float(L2),
+        'Linf'    : Linf,
+        'L2_rel'  : float(L2 / L2_ref)     if L2_ref   > 0 else float('nan'),
+        'Linf_rel': float(Linf / Linf_ref) if Linf_ref > 0 else float('nan'),
+    }
+
+
+def _attach_error_norms(result):
+    """
+    Inspect a compare_numeric() result dict and compute error norms for every
+    value of the small parameter (and every variable, for systems).  Returns a
+    dict keyed by eps value.
+    """
+    errors = {}
+
+    # ODE / oscillator / stepwise: keys 't', 'u_pert'{eps:arr}, 'u_numerical'{eps:arr}
+    if 'u_pert' in result and 'u_numerical' in result and 't' in result:
+        t = result['t']
+        for ev, up in result['u_pert'].items():
+            un = result['u_numerical'][ev]
+            if isinstance(up, dict):                      # ODE system: {var: arr}
+                errors[ev] = {v: error_norms(un[v], up[v], t) for v in up}
+            else:
+                errors[ev] = error_norms(un, up, t)
+        return errors
+
+    # Boundary layer: keys 'x', 'results'{eps:{'u_expansion','u_numerical'}}
+    if 'x' in result and 'results' in result:
+        x = result['x']
+        for ev, d in result['results'].items():
+            errors[ev] = error_norms(d['u_numerical'], d['u_expansion'], x)
+        return errors
+
+    # Algebraic (scalar per eps): 'eps', 'perturbation', 'numerical'
+    if 'eps' in result and 'perturbation' in result and 'numerical' in result:
+        eps_arr = np.asarray(result['eps'], dtype=float)
+        pert, num = result['perturbation'], result['numerical']
+        if isinstance(pert, dict):                        # algebraic system: {var: arr}
+            for i, ev in enumerate(eps_arr):
+                errors[float(ev)] = {
+                    v: _scalar_error(num[v][i], pert[v][i]) for v in pert
+                }
+        else:
+            pert = np.asarray(pert, float); num = np.asarray(num, float)
+            for i, ev in enumerate(eps_arr):
+                errors[float(ev)] = _scalar_error(num[i], pert[i])
+        return errors
+
+    return errors
+
+
+def _scalar_error(ref, approx):
+    """Absolute and relative error for a single scalar (algebraic problems)."""
+    ref = float(ref); approx = float(approx)
+    abs_err = abs(approx - ref)
+    return {
+        'abs': abs_err,
+        'rel': abs_err / abs(ref) if ref != 0 else float('nan'),
+    }
+
+
+def _solver_settings(hierarchy):
+    """
+    Report the SciPy solver settings used for the numerical reference, so that
+    the comparison is fully reproducible.  The classification follows the same
+    dispatch order as compare_numeric().
+    """
+    from asymptotics.methods.regular_ode         import ODEHierarchy
+    from asymptotics.methods.lindstedt           import LindstedtHierarchy
+    from asymptotics.methods.multiple_scales     import MultScalesHierarchy
+    from asymptotics.methods.boundary_layer      import BoundaryLayerHierarchy
+    from asymptotics.core.hierarchy              import OrderHierarchy
+    from asymptotics.core.system_hierarchy       import SystemHierarchy
+    from asymptotics.methods.regular_ode_system  import ODESystemHierarchy
+    from asymptotics.methods.stepwise            import StepwiseHierarchy
+
+    ivp = {'solver': 'scipy.integrate.solve_ivp', 'method': 'RK45',
+           'rtol': 1e-10, 'atol': 1e-12, 'reference_label': 'Numerical reference'}
+    root = {'solver': 'scipy.optimize.root', 'method': 'hybr',
+            'reference_label': 'Numerical reference'}
+
+    if isinstance(hierarchy, StepwiseHierarchy):
+        return ivp
+    if isinstance(hierarchy, SystemHierarchy):
+        return root
+    if isinstance(hierarchy, ODESystemHierarchy):
+        return ivp
+    if isinstance(hierarchy, BoundaryLayerHierarchy):
+        return {'solver': 'scipy.integrate.solve_bvp', 'tol': 1e-6,
+                'max_nodes': 10000, 'reference_label': 'Numerical reference'}
+    if isinstance(hierarchy, ODEHierarchy):
+        return ivp
+    if isinstance(hierarchy, (LindstedtHierarchy, MultScalesHierarchy)):
+        return ivp
+    if isinstance(hierarchy, OrderHierarchy):
+        return root
+    return {'reference_label': 'Numerical reference'}
+
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +307,7 @@ def _compare_algebraic(h, eps_list, n_points=100, problem=None, **kwargs):
     num_vals = np.array(num_vals)
 
     fig, ax = plt.subplots(figsize=(5, 4))
-    ax.plot(eps_vals, num_vals,  'k-',   lw=2,   label='Exact (root)', alpha=0.9)
+    ax.plot(eps_vals, num_vals,  'k-',   lw=2,   label='Numerical reference', alpha=0.9)
     ax.plot(eps_vals, pert_vals, 'ro--', lw=1.5, ms=5, markevery=max(1, len(eps_vals)//10),
             label=f'Perturbation (order {len(h)-1})')
     ax.set_xlabel('ε')
@@ -204,7 +370,7 @@ def _compare_ode(h, eps_list, plot_range=None, n_points=300, problem=None, **kwa
             u_num = _solve_ode_bvp(h, eps_val, plot_range, t_vals, problem, param_subs=kwargs.get("param_subs", {}))
 
         ax.plot(t_vals, u_num,  '-',  color=color, lw=2,   alpha=0.85,
-                label=f'Exact  ε={eps_val}')
+                label=f'Numerical reference  ε={eps_val}')
         ax.plot(t_vals, u_pert, '--', color=color, lw=1.5, ms=4,
                 marker='o', markevery=30, alpha=0.9,
                 label=f'Perturbation  ε={eps_val}')
@@ -309,7 +475,7 @@ def _compare_ode_oscillator(h, eps_list, plot_range=None, n_points=500,
         u_num  = sol.sol(t_vals)[0]
 
         ax.plot(t_vals, u_num,  '-',  color=color, lw=2,   alpha=0.85,
-                label=f'Exact  ε={eps_val}')
+                label=f'Numerical reference  ε={eps_val}')
         ax.plot(t_vals, u_pert, '--', color=color, lw=1.5, ms=4,
                 marker='o', markevery=30, alpha=0.9,
                 label=f'Perturbation  ε={eps_val}')
@@ -380,7 +546,7 @@ def _compare_boundary_layer(h, eps_list, n_points=400, problem=None, **kwargs):
             sol   = _solve_bvp(rhs_fn, bc_fn, x_num, y0, tol=1e-5, max_nodes=10000)
         u_num = sol.sol(x_vals)[0]
 
-        ax.plot(x_vals, u_num,   'k-',   lw=2,   label='Exact', alpha=0.9)
+        ax.plot(x_vals, u_num,   'k-',   lw=2,   label='Numerical reference', alpha=0.9)
         ax.plot(x_vals, u_comp,  'ro--', lw=1.5, ms=4, markevery=25, label='Expansion')
         ax.plot(x_vals, u_outer, 'b:',   lw=2,   label='Outer')
         ax.plot(x_vals, u_inner, 'g-.',  lw=1.8, label='Inner', alpha=0.85)
@@ -460,7 +626,7 @@ def _compare_ode_system(h, eps_list, plot_range=None, n_points=300,
             u_num = sol.sol(t_vals)[state_start[var]]
 
             ax.plot(t_vals, u_num,  '-',  color=color, lw=2,   alpha=0.85,
-                    label=f'Exact  ε={eps_val}' if j==0 else f'ε={eps_val}')
+                    label=f'Numerical reference  ε={eps_val}' if j==0 else f'ε={eps_val}')
             ax.plot(t_vals, u_pert, '--', color=color, lw=1.5, ms=4,
                     marker='o', markevery=25, alpha=0.9,
                     label=f'Pert.  ε={eps_val}' if j==0 else None)
