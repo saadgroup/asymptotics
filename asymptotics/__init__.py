@@ -56,7 +56,14 @@ sol.eval(eps, at=None, params=None)
 
 sol.compare_numeric(eps, params=None, plot_range=None, filename=None)
     Numerical verification via SciPy + comparison plot.
-    Returns dict with 't', 'u_pert', 'u_numerical', 'fig' (ODE types).
+    Returns dict with 't', 'u_pert', 'u_numerical', 'fig' (ODE types), plus
+    'errors' (L2/Linf absolute and relative error, keyed by eps value;
+    per-variable for systems) and 'settings' (SciPy solver, method, and
+    tolerances used for the numerical reference — for reproducible reporting).
+
+asymptotics.error_norms(u_ref, u_approx, x=None)
+    Standalone L2/Linf (absolute + relative) error between two sampled
+    solutions; grid-independent L2 via trapezoidal integration when x is given.
 
 sol.to_latex(environment='align', show_orders=False, filename=None)
     Export results as LaTeX source.
@@ -138,7 +145,7 @@ from asymptotics.methods.stepwise import StepwiseHierarchy
 # ---------------------------------------------------------------------------
 # Standalone functions (also available as sol.method() on every hierarchy)
 # ---------------------------------------------------------------------------
-from asymptotics.numerics    import compare_numeric
+from asymptotics.numerics    import compare_numeric, error_norms
 from asymptotics.eval        import eval_hierarchy as eval
 from asymptotics.latex_export import to_latex
 
@@ -178,6 +185,7 @@ __all__ = [
     "ConditionError",
     # Standalone functions
     "compare_numeric",
+    "error_norms",
     "eval",
     "to_latex",
     # Convenience
