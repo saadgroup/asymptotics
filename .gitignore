@@ -38,3 +38,8 @@ env/
 
 # Distribution
 *.tar.gz
+
+# Cowork transfer scratch and built docs
+docs/_build/
+_transfer/
+_to_delete/

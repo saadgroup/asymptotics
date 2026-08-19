@@ -1,6 +1,6 @@
 """
 asymptotics.methods.lindstedt
-==========================
+=============================
 Lindstedt–Poincaré method for nonlinear oscillators.
 
 For equations of the form:
@@ -34,20 +34,98 @@ from sympy import (
 # ---------------------------------------------------------------------------
 
 class LindstedtHierarchy:
-    """
-    Result of a Lindstedt–Poincaré expansion.
+    r"""
+    Result of a Lindstedt–Poincaré expansion of a nonlinear oscillator.
+
+    A container holding the order-by-order results produced by
+    :func:`expand_lindstedt`. It bundles the frequency expansion
+    :math:`\omega(\varepsilon)`, the per-order strained-time solutions
+    :math:`u_k(\tau)`, and the assembled uniformly valid expansion, together
+    with the four-method presentation API (:meth:`show`, :meth:`eval`,
+    :meth:`compare_numeric`, :meth:`to_latex`) shared by every hierarchy in
+    the toolkit.
+
+    The Lindstedt–Poincaré method cures the secular (unbounded) terms that
+    spoil a naive regular expansion of a periodic oscillator by *straining*
+    the time coordinate,
+
+    .. math::
+
+        \tau = \omega(\varepsilon)\, t, \qquad
+        \omega(\varepsilon) = \omega_0 + \varepsilon\,\omega_1
+                              + \varepsilon^2\,\omega_2 + \cdots ,
+
+    and choosing each frequency correction :math:`\omega_k` so that the
+    resonant (secular) forcing at order :math:`\varepsilon^k` vanishes. The
+    solution is expanded as
+    :math:`u = \sum_k \varepsilon^k u_k(\tau)`.
+
+    Indexing and length: ``sol[k]`` returns the
+    :class:`LindstedtOrderEntry` for order ``k`` and ``len(sol)`` is the
+    number of orders (``order + 1``, i.e. orders ``0`` through ``order``).
 
     Attributes
     ----------
-    entries         : list of LindstedtOrderEntry
-    omega_expansion : Expr   — omega = omega_0 + eps*omega_1 + ...
-    omega_values    : dict   — {omega_k_sym: value}
-    expansion       : Expr   — u(tau, eps) assembled
-    expansion_t     : Expr   — u(t, eps) with tau = omega*t
-    small_param     : Symbol
-    independent     : Symbol — t
-    tau             : Symbol — strained time
-    omega_0         : Expr   — unperturbed frequency
+    entries : list of LindstedtOrderEntry
+        One entry per order, indexed ``0 .. order``. Also reachable via
+        ``sol[k]``.
+    omega_expansion : sympy.Expr
+        The frequency series
+        :math:`\omega = \omega_0 + \varepsilon\,\omega_1 + \cdots` with every
+        :math:`\omega_k` replaced by its solved value. For the Duffing
+        oscillator this is :math:`1 + \tfrac{3}{8}\varepsilon
+        - \tfrac{21}{256}\varepsilon^2`.
+    omega_values : dict
+        Map ``{omega_k_sym: value}`` of each frequency-correction symbol to
+        its solved value, including ``omega_0``.
+    expansion : sympy.Expr
+        The assembled expansion :math:`u(\tau,\varepsilon)` in the strained
+        time :math:`\tau`.
+    expansion_t : sympy.Expr
+        The same expansion written in physical time, obtained from
+        ``expansion`` by the substitution
+        :math:`\tau = \omega(\varepsilon)\,t`. This is the uniformly valid
+        approximation and the one :meth:`eval` / :meth:`compare_numeric`
+        sample.
+    small_param : sympy.Symbol
+        The perturbation parameter :math:`\varepsilon`.
+    independent : sympy.Symbol
+        The physical independent variable :math:`t`.
+    tau : sympy.Symbol
+        The strained-time symbol :math:`\tau`.
+    omega_0 : sympy.Expr
+        The unperturbed (leading-order) frequency :math:`\omega_0`,
+        auto-detected from the unperturbed equation.
+
+    See Also
+    --------
+    expand_lindstedt : Function that builds this hierarchy.
+    LindstedtOrderEntry : Per-order record returned by ``sol[k]``.
+    MultScalesHierarchy : Result of the related multiple-scales method.
+
+    Examples
+    --------
+    Duffing oscillator :math:`u'' + u + \varepsilon u^3 = 0`,
+    :math:`u(0)=1,\ u'(0)=0`:
+
+    >>> from asymptotics import ODE
+    >>> eq = ODE("u'' + u + eps*u**3",
+    ...          dependent='u', small_param='eps', independent='t',
+    ...          conditions=["u(0) = 1", "u'(0) = 0"])
+    >>> sol = eq.expand_lindstedt(order=2)
+    >>> len(sol)
+    3
+    >>> sol.omega_0
+    1
+    >>> sol.omega_expansion
+    -21*eps**2/256 + 3*eps/8 + 1
+
+    The classic first frequency correction is :math:`\omega_1 = 3/8`:
+
+    >>> sol[1].omega_k_val
+    3/8
+    >>> sol[0].particular_solution   # leading order u_0(tau)
+    cos(tau)
     """
 
     def __init__(self):
@@ -64,35 +142,94 @@ class LindstedtHierarchy:
         self._problem_repr   = ""
 
     def __getitem__(self, order: int):
+        """Return the :class:`LindstedtOrderEntry` for the given ``order``.
+
+        Enables ``sol[k]`` access to the order-``k`` record. ``order`` is a
+        plain integer index into :attr:`entries` (order ``0`` is the
+        leading-order term), so negative indices count from the end in the
+        usual Python fashion.
+
+        Parameters
+        ----------
+        order : int
+            Perturbation order, ``0`` through ``len(sol) - 1``.
+
+        Returns
+        -------
+        LindstedtOrderEntry
+            The record for that order.
+        """
         return self.entries[order]
 
     def __len__(self):
+        """Number of orders in the hierarchy.
+
+        Returns
+        -------
+        int
+            One more than the requested expansion order, i.e. orders ``0``
+            through ``order`` inclusive (``3`` for ``order=2``).
+        """
         return len(self.entries)
 
 
     def compare_numeric(self, eps, params=None, **kwargs):
-        """
-        Compare this expansion against a numerical solution.
+        r"""
+        Verify the expansion against a SciPy numerical solution and plot.
+
+        Substitutes ``eps`` into :attr:`expansion_t`, integrates the original
+        ODE numerically with :func:`scipy.integrate.solve_ivp`, and builds a
+        comparison figure plus error metrics. Useful for confirming that the
+        Lindstedt approximation stays in phase over many periods (its whole
+        purpose).
 
         Parameters
         ----------
         eps : float
-            Value of the small parameter ε to use.
-        problem : ODE, optional
-            The original problem object. Defaults to the equation
-            used to create this hierarchy — usually not needed.
+            Value of the small parameter :math:`\varepsilon` to use.
+        params : dict, optional
+            Numerical values for any extra symbolic parameters in the problem.
         **kwargs
-            plot_range : [a, b]  — domain for plotting (ODE only)
-            n_points  : int     — number of plot points (default 300)
+            plot_range : [a, b]
+                Domain over which to sample and plot.
+            n_points : int
+                Number of plot points (default 300).
 
         Returns
         -------
-        dict with keys:
-            't' or 'x'    : ndarray — evaluation points
-            'u_pert'      : ndarray — perturbation expansion
-            'u_numerical' : ndarray — numerical solution
-            'fig'         : matplotlib Figure
-            (boundary layer also returns 'u_outer', 'u_inner', 'u_expansion')
+        dict
+            Keys include:
+
+            ``'t'`` : ndarray
+                Evaluation points.
+            ``'u_pert'`` : ndarray
+                The Lindstedt expansion sampled on ``t``.
+            ``'u_numerical'`` : ndarray
+                The SciPy reference solution.
+            ``'fig'`` : matplotlib.figure.Figure
+                Comparison plot.
+            ``'errors'`` : dict
+                L2/Linf absolute and relative errors keyed by ``eps``.
+            ``'settings'`` : dict
+                Solver, method, and tolerances used for reproducibility.
+
+        Notes
+        -----
+        The plot is rendered with matplotlib. In a headless environment set a
+        non-interactive backend (``import matplotlib; matplotlib.use('Agg')``)
+        before calling.
+
+        Examples
+        --------
+        >>> import matplotlib; matplotlib.use('Agg')
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u'' + u + eps*u**3",
+        ...          dependent='u', small_param='eps', independent='t',
+        ...          conditions=["u(0) = 1", "u'(0) = 0"])
+        >>> sol = eq.expand_lindstedt(order=2)
+        >>> result = sol.compare_numeric(eps=0.1)
+        >>> sorted(result.keys())
+        ['errors', 'fig', 'settings', 't', 'u_numerical', 'u_pert']
         """
         from asymptotics.numerics import compare_numeric
         problem = getattr(self, '_problem', None)
@@ -100,27 +237,41 @@ class LindstedtHierarchy:
 
 
     def to_latex(self, environment='align', show_orders=False, filename=None):
-        """
-        Export this expansion as LaTeX source.
+        r"""
+        Export the Lindstedt expansion as LaTeX source.
+
+        Renders the frequency expansion :math:`\omega(\varepsilon)` and the
+        assembled solution (in both strained time :math:`\tau` and physical
+        time :math:`t`) as a LaTeX string, optionally written to a file. The
+        small parameter is always typeset as ``\varepsilon``.
 
         Parameters
         ----------
-        environment : str
-            LaTeX math environment: 'align' (default), 'equation', or 'gather'.
-        show_orders : bool
-            If True, include each order u_k separately. Default False.
+        environment : str, optional
+            LaTeX math environment: ``'align'`` (default), ``'equation'``, or
+            ``'gather'``.
+        show_orders : bool, optional
+            If True, include each order :math:`u_k` separately. Default False.
         filename : str, optional
-            If given, write to this file. Otherwise print to console.
+            If given, write the source to this file. Otherwise the string is
+            only returned.
 
         Returns
         -------
-        str — the LaTeX source string
+        str
+            The LaTeX source string.
 
         Examples
         --------
-        >>> print(sol.to_latex())
-        >>> sol.to_latex(filename="result.tex")
-        >>> sol.to_latex(environment='equation', show_orders=True)
+        >>> import matplotlib; matplotlib.use('Agg')
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u'' + u + eps*u**3",
+        ...          dependent='u', small_param='eps', independent='t',
+        ...          conditions=["u(0) = 1", "u'(0) = 0"])
+        >>> sol = eq.expand_lindstedt(order=2)
+        >>> latex = sol.to_latex()
+        >>> r"\omega(\varepsilon)" in latex
+        True
         """
         from asymptotics.latex_export import to_latex
         return to_latex(self, environment=environment,
@@ -128,45 +279,173 @@ class LindstedtHierarchy:
 
 
     def eval(self, eps, at=None, params=None):
-        """
-        Evaluate the perturbation expansion at given eps and independent variable values.
+        r"""
+        Evaluate the uniformly valid expansion numerically.
+
+        Substitutes ``eps`` into :attr:`expansion_t` (the solution in physical
+        time, with :math:`\tau = \omega(\varepsilon)\,t` already applied) and
+        samples it on the grid ``at``.
 
         Parameters
         ----------
         eps : float or list of float
-            Value(s) of the small parameter.
-        at : array-like, optional
-            Values of the independent variable (for ODEs).
-            Not needed for algebraic equations.
+            Value(s) of the small parameter :math:`\varepsilon`.
+        at : array-like
+            Values of the physical independent variable :math:`t` at which to
+            sample. Required for this ODE hierarchy.
+        params : dict, optional
+            Numerical values for any additional symbolic parameters.
 
         Returns
         -------
-        For ODEs:
-            ndarray if eps is scalar, dict {eps: ndarray} if eps is a list
-        For algebraic:
-            float if eps is scalar, ndarray if eps is a list
+        numpy.ndarray or dict
+            An ``ndarray`` of samples if ``eps`` is a scalar, or a dict
+            ``{eps: ndarray}`` if ``eps`` is a list.
 
         Examples
         --------
-        >>> # ODE
-        >>> t_vals = np.linspace(0, 20, 300)
-        >>> u = sol.eval(eps=0.1, at=t_vals)           # ndarray
-        >>> u = sol.eval(eps=[0.1, 0.2], at=t_vals)    # dict {0.1: array, 0.2: array}
-        >>>
-        >>> # Algebraic
-        >>> x = sol.eval(eps=0.1)                       # float
-        >>> x = sol.eval(eps=[0.1, 0.2, 0.3])           # ndarray
+        >>> import numpy as np
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u'' + u + eps*u**3",
+        ...          dependent='u', small_param='eps', independent='t',
+        ...          conditions=["u(0) = 1", "u'(0) = 0"])
+        >>> sol = eq.expand_lindstedt(order=2)
+        >>> u = sol.eval(eps=0.1, at=np.array([0.0, 1.0]))
+        >>> float(u[0])
+        1.0
         """
         from asymptotics.eval import eval_hierarchy
         return eval_hierarchy(self, eps, at=at, params=params)
 
     def show(self, orders=None, mode: str = "auto") -> None:
+        r"""
+        Pretty-print the hierarchy: frequency expansion and per-order solutions.
+
+        Renders the frequency series :math:`\omega(\varepsilon)`, the strained
+        coordinate relation :math:`\tau = \omega(\varepsilon)\,t`, and the
+        solutions :math:`u_k(\tau)`. Output is typeset as LaTeX in a Jupyter
+        notebook and as plain text in a terminal.
+
+        Parameters
+        ----------
+        orders : int or iterable of int, optional
+            Restrict the display to these orders. By default every order is
+            shown.
+        mode : {'auto', 'latex', 'text'}, optional
+            Force a rendering mode. ``'auto'`` (default) chooses LaTeX in a
+            notebook and plain text otherwise.
+
+        Returns
+        -------
+        None
+            This method prints/displays and returns nothing.
+
+        Examples
+        --------
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u'' + u + eps*u**3",
+        ...          dependent='u', small_param='eps', independent='t',
+        ...          conditions=["u(0) = 1", "u'(0) = 0"])
+        >>> sol = eq.expand_lindstedt(order=2)
+        >>> sol.show(mode='text')          # doctest: +SKIP
+        """
         from asymptotics.display.lindstedt_display import show_lindstedt
         show_lindstedt(self, orders=orders, mode=mode)
 
 
 class LindstedtOrderEntry:
-    """One order of the Lindstedt hierarchy."""
+    r"""
+    One order of a Lindstedt–Poincaré hierarchy.
+
+    Records everything computed at a single order :math:`\varepsilon^k`: the
+    governing ODE for :math:`u_k(\tau)`, the secularity (no-resonance)
+    condition that fixes the frequency correction :math:`\omega_k`, and the
+    resulting solutions. Returned by ``sol[k]`` for a
+    :class:`LindstedtHierarchy`.
+
+    At order :math:`k \ge 1` the method arranges the equation as
+
+    .. math::
+
+        u_k'' + \omega_0^2\, u_k = F_k(\tau),
+
+    where the forcing :math:`F_k` may contain terms proportional to
+    :math:`\cos(\omega_0\tau)` and :math:`\sin(\omega_0\tau)`. These resonate
+    with the homogeneous solution and would produce secular (unbounded)
+    :math:`\tau\cos(\omega_0\tau)` terms. The **secularity condition** sets
+    those resonant coefficients to zero, which determines
+    :math:`\omega_k`; the remaining non-resonant forcing is solved with
+    homogeneous initial conditions :math:`u_k(0)=u_k'(0)=0`.
+
+    Parameters
+    ----------
+    order : int
+        The perturbation order :math:`k`.
+    ode : sympy.Eq
+        The order-:math:`k` ODE for :math:`u_k(\tau)` (see :attr:`ode`).
+    secularity_condition : sympy.Eq or None
+        The no-resonance equation solved for :math:`\omega_k` (``None`` at
+        order 0).
+    omega_k_sym : sympy.Symbol or None
+        The frequency-correction symbol :math:`\omega_k` (``None`` at order 0).
+    omega_k_val : sympy.Expr or None
+        The solved value of :math:`\omega_k` (``None`` at order 0).
+    general_solution : sympy.Expr
+        General solution of the order-:math:`k` ODE with free constants.
+    particular_solution : sympy.Expr
+        Solution with the integration constants fixed by the initial
+        conditions. Also available as :attr:`solution`.
+    symbol : sympy.Function
+        The unknown :math:`u_k(\tau)`.
+
+    Attributes
+    ----------
+    order : int
+        Perturbation order :math:`k`.
+    ode : sympy.Eq
+        The order-:math:`k` governing ODE. Aliased as :attr:`equation` for a
+        uniform per-order API across all hierarchy types. For the Duffing
+        order-1 term this is
+        :math:`u_1'' + u_1 = -\tfrac{1}{4}\cos 3\tau`.
+    equation : sympy.Eq
+        Alias of :attr:`ode`.
+    secularity_condition : sympy.Eq or None
+        The condition (linear in :math:`\omega_k`) whose vanishing removes the
+        resonant forcing. For Duffing order 1 this is
+        :math:`2\omega_1 - \tfrac34 = 0`, giving :math:`\omega_1 = 3/8`.
+    omega_k_val : sympy.Expr or None
+        Solved value of the frequency correction :math:`\omega_k`.
+    omega_k_sym : sympy.Symbol or None
+        The symbol :math:`\omega_k` that :attr:`omega_k_val` solves for.
+    general_solution : sympy.Expr
+        General solution before applying initial conditions.
+    particular_solution : sympy.Expr
+        Solution after applying homogeneous initial conditions.
+    solution : sympy.Expr
+        Alias of :attr:`particular_solution`.
+
+    See Also
+    --------
+    LindstedtHierarchy : The container whose ``sol[k]`` yields these entries.
+
+    Examples
+    --------
+    >>> from sympy import Rational
+    >>> from asymptotics import ODE
+    >>> eq = ODE("u'' + u + eps*u**3",
+    ...          dependent='u', small_param='eps', independent='t',
+    ...          conditions=["u(0) = 1", "u'(0) = 0"])
+    >>> sol = eq.expand_lindstedt(order=2)
+    >>> entry = sol[1]
+    >>> entry.omega_k_val == Rational(3, 8)
+    True
+    >>> entry.secularity_condition
+    Eq(2*omega_1 - 3/4, 0)
+    >>> entry.secular
+    True
+    >>> entry.equation is entry.ode
+    True
+    """
 
     def __init__(self, order, ode, secularity_condition,
                  omega_k_sym, omega_k_val,
@@ -255,17 +534,86 @@ def _detect_omega0(f_orig, d2u_sym, u_sym, eps_sym):
 # ---------------------------------------------------------------------------
 
 def expand_lindstedt(problem, order: int = 2) -> LindstedtHierarchy:
-    """
+    r"""
     Apply the Lindstedt–Poincaré method to a nonlinear oscillator ODE.
+
+    Solves a weakly nonlinear, conservative second-order oscillator of the
+    form
+
+    .. math::
+
+        u'' + \omega_0^2\, u + \varepsilon\, f(u, u', t) = 0
+
+    order by order in :math:`\varepsilon`, producing a *uniformly valid*
+    periodic approximation free of secular terms. The naive regular expansion
+    of such a problem develops resonant :math:`t\cos(\omega_0 t)` terms that
+    grow without bound; Lindstedt–Poincaré removes them by straining time,
+
+    .. math::
+
+        \tau = \omega(\varepsilon)\, t, \qquad
+        \omega(\varepsilon) = \omega_0 + \varepsilon\,\omega_1
+                              + \varepsilon^2\,\omega_2 + \cdots,
+
+    and choosing each :math:`\omega_k` from the secularity (no-resonance)
+    condition at order :math:`\varepsilon^k`.
+
+    The leading frequency :math:`\omega_0` is auto-detected from the
+    unperturbed equation as :math:`\sqrt{c_u / c_{u''}}`, where
+    :math:`c_{u''}` and :math:`c_u` are the coefficients of :math:`u''` and
+    :math:`u` at :math:`\varepsilon = 0`.
 
     Parameters
     ----------
     problem : ODE
-    order : int
+        A second-order initial-value problem containing the small parameter.
+        All conditions must be at :math:`t = 0` (IVP). The unperturbed part
+        must be oscillatory (:math:`\omega_0^2 > 0`).
+    order : int, optional
+        Highest power of :math:`\varepsilon` to compute (default 2). The
+        returned hierarchy holds orders ``0`` through ``order``.
 
     Returns
     -------
     LindstedtHierarchy
+        The order-by-order result, including :attr:`~LindstedtHierarchy.omega_expansion`
+        and the assembled physical-time solution
+        :attr:`~LindstedtHierarchy.expansion_t`.
+
+    Raises
+    ------
+    NoSmallParameterError
+        If the small parameter does not appear in the equation.
+    ValueError
+        If the ODE is not second order, if the problem is a boundary-value
+        problem, or if the unperturbed frequency squared is non-positive
+        (non-oscillatory).
+
+    Notes
+    -----
+    Called through the convenience method ``ODE.expand_lindstedt(order)``.
+
+    For the classic Duffing oscillator :math:`u'' + u + \varepsilon u^3 = 0`
+    the method reproduces the textbook frequency
+
+    .. math::
+
+        \omega = 1 + \tfrac{3}{8}\varepsilon
+                 - \tfrac{21}{256}\varepsilon^2 + \cdots .
+
+    Examples
+    --------
+    >>> from asymptotics import ODE
+    >>> eq = ODE("u'' + u + eps*u**3",
+    ...          dependent='u', small_param='eps', independent='t',
+    ...          conditions=["u(0) = 1", "u'(0) = 0"])
+    >>> sol = eq.expand_lindstedt(order=2)
+    >>> sol.omega_expansion
+    -21*eps**2/256 + 3*eps/8 + 1
+    >>> sol[1].omega_k_val
+    3/8
+    >>> sol[0].particular_solution
+    cos(tau)
     """
     from asymptotics.core.exceptions import NoSmallParameterError
 

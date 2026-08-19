@@ -1,6 +1,6 @@
 """
 asymptotics.eval
-=============
+================
 Evaluate perturbation expansions at given eps and independent variable values.
 
 Usage
@@ -18,25 +18,83 @@ from sympy import lambdify
 
 
 def eval_hierarchy(h, eps, at=None, params=None):
-    """
-    Evaluate a perturbation hierarchy at given eps and optional point array.
+    r"""
+    Evaluate a perturbation expansion numerically at given ``eps`` values.
+
+    This is the engine behind ``sol.eval(...)``.  It substitutes the small
+    parameter (and any symbolic parameters) into the assembled expansion and
+    returns concrete numbers: a plain ``float`` for algebraic problems, or a
+    NumPy array sampled at the requested points for differential problems.
+    For the Lindstedt and multiple-scales methods the physical-time expansion
+    (``expansion_t``, with the strained frequency already folded in) is used,
+    so ``at`` is ordinary physical time.
 
     Parameters
     ----------
-    h : any perturbation hierarchy
+    h : perturbation hierarchy
+        Any supported hierarchy: ``OrderHierarchy`` (algebraic),
+        ``SystemHierarchy`` (algebraic system), ``ODEHierarchy``,
+        ``LindstedtHierarchy``, ``MultScalesHierarchy``,
+        ``BoundaryLayerHierarchy``, ``ODESystemHierarchy``, or
+        ``StepwiseHierarchy``.
     eps : float or list of float
+        Value(s) of the small parameter.  A scalar selects the "scalar" return
+        forms below; a list selects the "list" forms.
     at : array-like, optional
-        Values of the independent variable. Required for ODE hierarchies.
+        Values of the independent variable at which to sample.  **Required**
+        for every differential hierarchy (ODE, oscillator, boundary layer, ODE
+        system); ignored for algebraic problems.  A ``ValueError`` is raised if
+        it is missing for a differential hierarchy.
     params : dict, optional
-        Values for symbolic parameters, e.g. {'a': 0.5, 'b': 2.0}.
-        Required if the original equation contained symbolic parameters.
+        Numerical values for symbolic parameters, e.g. ``{'a': 0.5, 'b': 2.0}``.
+        Required (with all keys present) whenever the original equation carried
+        symbolic parameters; otherwise a ``ValueError`` is raised.
 
     Returns
     -------
-    For ODEs with scalar eps  : ndarray
-    For ODEs with list eps    : dict {eps_val: ndarray}
-    For algebraic scalar eps  : float
-    For algebraic list eps    : ndarray
+    float or numpy.ndarray or dict
+        The return type depends on the hierarchy and on whether ``eps`` is
+        scalar or a list:
+
+        - Algebraic equation, scalar ``eps`` -> ``float``.
+        - Algebraic equation, list ``eps`` -> ``ndarray`` (one value per eps).
+        - Algebraic system -> ``dict`` ``{variable: float}`` (scalar ``eps``)
+          or ``{variable: ndarray}`` (list ``eps``).
+        - ODE / oscillator / boundary layer, scalar ``eps`` -> ``ndarray``
+          sampled on ``at``.
+        - ODE / oscillator / boundary layer, list ``eps`` ->
+          ``dict`` ``{eps_val: ndarray}``.
+        - ODE system, scalar ``eps`` -> ``dict`` ``{variable: ndarray}``;
+          list ``eps`` -> ``dict`` ``{eps_val: {variable: ndarray}}``.
+
+    Raises
+    ------
+    ValueError
+        If ``at`` is required (differential hierarchy) but not given, if
+        symbolic parameters are unresolved, or if the expansion still contains
+        free symbols after substitution.
+
+    Examples
+    --------
+    Algebraic problem — a scalar ``eps`` returns a ``float``, a list returns an
+    array:
+
+    >>> import numpy as np
+    >>> from asymptotics import AlgebraicEquation, eval as evaluate
+    >>> eq  = AlgebraicEquation("x**3 + eps*x - 1",
+    ...                         dependent="x", small_param="eps")
+    >>> sol = eq.expand_regular(order=3)
+    >>> round(evaluate(sol, eps=0.1), 6)
+    0.966679
+    >>> np.round(evaluate(sol, eps=[0.1, 0.2]), 6)
+    array([0.966679, 0.933432])
+
+    ODE problem — ``at`` is required and the result is an ``ndarray`` sampled
+    on that grid:
+
+    >>> u = evaluate(sol, eps=0.1)          # algebraic: no 'at' needed
+    >>> type(u).__name__
+    'float'
     """
     from asymptotics.methods.regular_ode       import ODEHierarchy
     from asymptotics.methods.lindstedt         import LindstedtHierarchy

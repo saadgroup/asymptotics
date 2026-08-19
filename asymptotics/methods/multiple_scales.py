@@ -1,6 +1,6 @@
 """
 asymptotics.methods.multiple_scales
-================================
+===================================
 Method of multiple scales for weakly nonlinear oscillators.
 
 For equations of the form:
@@ -40,21 +40,93 @@ from sympy import (
 # ---------------------------------------------------------------------------
 
 class MultScalesHierarchy:
-    """
-    Result of a multiple-scales expansion.
+    r"""
+    Result of a method-of-multiple-scales expansion.
+
+    A container holding the order-by-order results produced by
+    :func:`expand_multiple_scales`. It bundles the leading-order amplitude
+    functions :math:`A(T_1), B(T_1)`, the solvability (amplitude) equations,
+    the per-order solutions, and the assembled expansion, together with the
+    four-method presentation API (:meth:`show`, :meth:`eval`,
+    :meth:`compare_numeric`, :meth:`to_latex`) shared by every hierarchy in
+    the toolkit.
+
+    The method of multiple scales treats the fast oscillation and the slow
+    amplitude/phase modulation of a weakly perturbed oscillator as functions
+    of independent time scales,
+
+    .. math::
+
+        T_0 = t \quad\text{(fast)}, \qquad
+        T_1 = \varepsilon\, t \quad\text{(slow)},
+
+    and writes :math:`u = u_0(T_0, T_1) + \varepsilon\,u_1(T_0, T_1) +
+    \cdots`. The leading order is
+    :math:`u_0 = A(T_1)\cos(\omega_0 T_0) + B(T_1)\sin(\omega_0 T_0)`, and the
+    requirement that :math:`u_1` contain no secular (resonant) forcing yields
+    *solvability conditions* — ODEs in the slow time for the amplitudes
+    :math:`A(T_1)` and :math:`B(T_1)`.
+
+    Indexing and length: ``sol[k]`` returns the
+    :class:`MultScalesOrderEntry` for order ``k`` and ``len(sol)`` is
+    ``order + 1``.
 
     Attributes
     ----------
-    entries             : list of MultScalesOrderEntry
-    expansion           : Expr  — u(T_0, T_1, eps) assembled
-    expansion_t         : Expr  — u(t, eps) with T_0=t, T_1=eps*t
-    amplitude_A         : Expr  — A(T_1) solved
-    amplitude_B         : Expr  — B(T_1) solved
-    solvability_odes    : list  — [Eq(dA/dT1, ...), Eq(dB/dT1, ...)]
-    small_param         : Symbol
-    independent         : Symbol — t
-    T0, T1              : Symbol — fast and slow times
-    omega_0             : Expr
+    entries : list of MultScalesOrderEntry
+        One entry per order, indexed ``0 .. order``. Also reachable via
+        ``sol[k]``.
+    expansion : sympy.Expr
+        The assembled expansion :math:`u(T_0, T_1, \varepsilon)` in the two
+        time scales.
+    expansion_t : sympy.Expr
+        The same expansion in physical time, obtained via
+        :math:`T_0 = t,\ T_1 = \varepsilon t`. For the damped oscillator this
+        is :math:`e^{-\varepsilon t/2}\cos t`.
+    amplitude_A : sympy.Expr
+        The solved slow-time amplitude :math:`A(T_1)` (or the symbolic
+        ``A(T_1)`` if SymPy could not integrate the solvability ODE).
+    amplitude_B : sympy.Expr
+        The solved slow-time amplitude :math:`B(T_1)`.
+    solvability_odes : list of tuple
+        One ``(A_eq, B_eq)`` pair per positive order — the amplitude ODEs
+        derived from the secularity conditions.
+    small_param : sympy.Symbol
+        The perturbation parameter :math:`\varepsilon`.
+    independent : sympy.Symbol
+        The physical independent variable :math:`t`.
+    T0 : sympy.Symbol
+        The fast-time symbol :math:`T_0 = t`.
+    T1 : sympy.Symbol
+        The slow-time symbol :math:`T_1 = \varepsilon t`.
+    omega_0 : sympy.Expr
+        The unperturbed frequency :math:`\omega_0`, auto-detected from the
+        unperturbed equation.
+
+    See Also
+    --------
+    expand_multiple_scales : Function that builds this hierarchy.
+    MultScalesOrderEntry : Per-order record returned by ``sol[k]``.
+    LindstedtHierarchy : Result of the related Lindstedt–Poincaré method.
+
+    Examples
+    --------
+    Damped oscillator :math:`u'' + u + \varepsilon u' = 0`,
+    :math:`u(0)=1,\ u'(0)=0` (exact envelope :math:`e^{-\varepsilon t/2}`):
+
+    >>> from asymptotics import ODE
+    >>> eq = ODE("u'' + u + eps*u'",
+    ...          dependent='u', small_param='eps', independent='t',
+    ...          conditions=["u(0) = 1", "u'(0) = 0"])
+    >>> sol = eq.expand_multiple_scales(order=1)
+    >>> sol.omega_0
+    1
+    >>> sol.amplitude_A
+    exp(-T_1/2)
+    >>> sol.amplitude_B
+    0
+    >>> sol.expansion_t
+    exp(-eps*t/2)*cos(t)
     """
 
     def __init__(self):
@@ -73,35 +145,93 @@ class MultScalesHierarchy:
         self._problem_repr    = ""
 
     def __getitem__(self, order: int):
+        """Return the :class:`MultScalesOrderEntry` for the given ``order``.
+
+        Enables ``sol[k]`` access to the order-``k`` record. ``order`` is a
+        plain integer index into :attr:`entries` (order ``0`` is the
+        leading-order term); negative indices count from the end.
+
+        Parameters
+        ----------
+        order : int
+            Perturbation order, ``0`` through ``len(sol) - 1``.
+
+        Returns
+        -------
+        MultScalesOrderEntry
+            The record for that order.
+        """
         return self.entries[order]
 
     def __len__(self):
+        """Number of orders in the hierarchy.
+
+        Returns
+        -------
+        int
+            One more than the requested expansion order (``2`` for
+            ``order=1``).
+        """
         return len(self.entries)
 
 
     def compare_numeric(self, eps, params=None, **kwargs):
-        """
-        Compare this expansion against a numerical solution.
+        r"""
+        Verify the expansion against a SciPy numerical solution and plot.
+
+        Substitutes ``eps`` into :attr:`expansion_t`, integrates the original
+        ODE numerically with :func:`scipy.integrate.solve_ivp`, and builds a
+        comparison figure plus error metrics. This confirms that the
+        slow-scale amplitude modulation captures the true envelope of the
+        solution.
 
         Parameters
         ----------
         eps : float
-            Value of the small parameter ε to use.
-        problem : ODE, optional
-            The original problem object. Defaults to the equation
-            used to create this hierarchy — usually not needed.
+            Value of the small parameter :math:`\varepsilon` to use.
+        params : dict, optional
+            Numerical values for any extra symbolic parameters in the problem.
         **kwargs
-            plot_range : [a, b]  — domain for plotting (ODE only)
-            n_points  : int     — number of plot points (default 300)
+            plot_range : [a, b]
+                Domain over which to sample and plot.
+            n_points : int
+                Number of plot points (default 300).
 
         Returns
         -------
-        dict with keys:
-            't' or 'x'    : ndarray — evaluation points
-            'u_pert'      : ndarray — perturbation expansion
-            'u_numerical' : ndarray — numerical solution
-            'fig'         : matplotlib Figure
-            (boundary layer also returns 'u_outer', 'u_inner', 'u_expansion')
+        dict
+            Keys include:
+
+            ``'t'`` : ndarray
+                Evaluation points.
+            ``'u_pert'`` : ndarray
+                The multiple-scales expansion sampled on ``t``.
+            ``'u_numerical'`` : ndarray
+                The SciPy reference solution.
+            ``'fig'`` : matplotlib.figure.Figure
+                Comparison plot.
+            ``'errors'`` : dict
+                L2/Linf absolute and relative errors keyed by ``eps``.
+            ``'settings'`` : dict
+                Solver, method, and tolerances used for reproducibility.
+
+        Notes
+        -----
+        The plot is rendered with matplotlib. In a headless environment set a
+        non-interactive backend (``import matplotlib; matplotlib.use('Agg')``)
+        before calling.
+
+        Examples
+        --------
+        >>> import matplotlib; matplotlib.use('Agg')
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u'' + u + eps*u'",
+        ...          dependent='u', small_param='eps', independent='t',
+        ...          conditions=["u(0) = 1", "u'(0) = 0"])
+        >>> sol = eq.expand_multiple_scales(order=1)
+        >>> result = sol.compare_numeric(eps=0.1)
+        >>> sorted(result.keys())
+        ['errors', 'fig', 'settings', 't', 'u_numerical', 'u_pert']
         """
         from asymptotics.numerics import compare_numeric
         problem = getattr(self, '_problem', None)
@@ -109,27 +239,40 @@ class MultScalesHierarchy:
 
 
     def to_latex(self, environment='align', show_orders=False, filename=None):
-        """
-        Export this expansion as LaTeX source.
+        r"""
+        Export the multiple-scales expansion as LaTeX source.
+
+        Renders the amplitude equations and the assembled solution (in the two
+        time scales and in physical time) as a LaTeX string, optionally
+        written to a file. The small parameter is always typeset as
+        ``\varepsilon``.
 
         Parameters
         ----------
-        environment : str
-            LaTeX math environment: 'align' (default), 'equation', or 'gather'.
-        show_orders : bool
-            If True, include each order u_k separately. Default False.
+        environment : str, optional
+            LaTeX math environment: ``'align'`` (default), ``'equation'``, or
+            ``'gather'``.
+        show_orders : bool, optional
+            If True, include each order :math:`u_k` separately. Default False.
         filename : str, optional
-            If given, write to this file. Otherwise print to console.
+            If given, write the source to this file. Otherwise the string is
+            only returned.
 
         Returns
         -------
-        str — the LaTeX source string
+        str
+            The LaTeX source string.
 
         Examples
         --------
-        >>> print(sol.to_latex())
-        >>> sol.to_latex(filename="result.tex")
-        >>> sol.to_latex(environment='equation', show_orders=True)
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u'' + u + eps*u'",
+        ...          dependent='u', small_param='eps', independent='t',
+        ...          conditions=["u(0) = 1", "u'(0) = 0"])
+        >>> sol = eq.expand_multiple_scales(order=1)
+        >>> latex = sol.to_latex()
+        >>> isinstance(latex, str)
+        True
         """
         from asymptotics.latex_export import to_latex
         return to_latex(self, environment=environment,
@@ -137,45 +280,172 @@ class MultScalesHierarchy:
 
 
     def eval(self, eps, at=None, params=None):
-        """
-        Evaluate the perturbation expansion at given eps and independent variable values.
+        r"""
+        Evaluate the uniformly valid expansion numerically.
+
+        Substitutes ``eps`` into :attr:`expansion_t` (the solution in physical
+        time, with :math:`T_0 = t,\ T_1 = \varepsilon t` already applied) and
+        samples it on the grid ``at``.
 
         Parameters
         ----------
         eps : float or list of float
-            Value(s) of the small parameter.
-        at : array-like, optional
-            Values of the independent variable (for ODEs).
-            Not needed for algebraic equations.
+            Value(s) of the small parameter :math:`\varepsilon`.
+        at : array-like
+            Values of the physical independent variable :math:`t` at which to
+            sample. Required for this ODE hierarchy.
+        params : dict, optional
+            Numerical values for any additional symbolic parameters.
 
         Returns
         -------
-        For ODEs:
-            ndarray if eps is scalar, dict {eps: ndarray} if eps is a list
-        For algebraic:
-            float if eps is scalar, ndarray if eps is a list
+        numpy.ndarray or dict
+            An ``ndarray`` of samples if ``eps`` is a scalar, or a dict
+            ``{eps: ndarray}`` if ``eps`` is a list.
 
         Examples
         --------
-        >>> # ODE
-        >>> t_vals = np.linspace(0, 20, 300)
-        >>> u = sol.eval(eps=0.1, at=t_vals)           # ndarray
-        >>> u = sol.eval(eps=[0.1, 0.2], at=t_vals)    # dict {0.1: array, 0.2: array}
-        >>>
-        >>> # Algebraic
-        >>> x = sol.eval(eps=0.1)                       # float
-        >>> x = sol.eval(eps=[0.1, 0.2, 0.3])           # ndarray
+        >>> import numpy as np
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u'' + u + eps*u'",
+        ...          dependent='u', small_param='eps', independent='t',
+        ...          conditions=["u(0) = 1", "u'(0) = 0"])
+        >>> sol = eq.expand_multiple_scales(order=1)
+        >>> u = sol.eval(eps=0.1, at=np.array([0.0, 1.0]))
+        >>> float(u[0])
+        1.0
         """
         from asymptotics.eval import eval_hierarchy
         return eval_hierarchy(self, eps, at=at, params=params)
 
     def show(self, orders=None, mode: str = "auto") -> None:
+        r"""
+        Pretty-print the hierarchy: amplitude equations and per-order solutions.
+
+        Renders the slow/fast time scales, the solvability (amplitude) ODEs
+        for :math:`A(T_1), B(T_1)`, and the solutions :math:`u_k(T_0, T_1)`.
+        Output is typeset as LaTeX in a Jupyter notebook and as plain text in
+        a terminal.
+
+        Parameters
+        ----------
+        orders : int or iterable of int, optional
+            Restrict the display to these orders. By default every order is
+            shown.
+        mode : {'auto', 'latex', 'text'}, optional
+            Force a rendering mode. ``'auto'`` (default) chooses LaTeX in a
+            notebook and plain text otherwise.
+
+        Returns
+        -------
+        None
+            This method prints/displays and returns nothing.
+
+        Examples
+        --------
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u'' + u + eps*u'",
+        ...          dependent='u', small_param='eps', independent='t',
+        ...          conditions=["u(0) = 1", "u'(0) = 0"])
+        >>> sol = eq.expand_multiple_scales(order=1)
+        >>> sol.show(mode='text')          # doctest: +SKIP
+        """
         from asymptotics.display.multiple_scales_display import show_multiple_scales
         show_multiple_scales(self, orders=orders, mode=mode)
 
 
 class MultScalesOrderEntry:
-    """One order of the multiple-scales hierarchy."""
+    r"""
+    One order of a multiple-scales hierarchy.
+
+    Records everything computed at a single order :math:`\varepsilon^k`: the
+    governing equation for :math:`u_k(T_0, T_1)`, the resonant (secular)
+    coefficients, the solvability (amplitude) ODEs derived from removing them,
+    and the resulting solution. Returned by ``sol[k]`` for a
+    :class:`MultScalesHierarchy`.
+
+    Because the unknown depends on both the fast time :math:`T_0` and the slow
+    time :math:`T_1`, the order-:math:`k` equation is technically a PDE,
+
+    .. math::
+
+        \partial_{T_0}^2 u_k + \omega_0^2\, u_k = F_k(T_0, T_1),
+
+    stored in :attr:`pde`. The forcing :math:`F_k` contains terms
+    proportional to :math:`\cos(\omega_0 T_0)` and :math:`\sin(\omega_0 T_0)`
+    whose coefficients (:attr:`secular_cos`, :attr:`secular_sin`) would drive
+    secular growth. Setting them to zero gives the **solvability conditions** —
+    ODEs in :math:`T_1` for the amplitudes :math:`A(T_1)` and :math:`B(T_1)`
+    (:attr:`solvability_A`, :attr:`solvability_B`).
+
+    Parameters
+    ----------
+    order : int
+        The perturbation order :math:`k`.
+    pde : sympy.Eq
+        The order-:math:`k` PDE for :math:`u_k(T_0, T_1)`.
+    secular_cos : sympy.Expr or None
+        Coefficient of :math:`\cos(\omega_0 T_0)` in the forcing (``None`` at
+        order 0).
+    secular_sin : sympy.Expr or None
+        Coefficient of :math:`\sin(\omega_0 T_0)` in the forcing (``None`` at
+        order 0).
+    solvability_A : sympy.Eq or None
+        The amplitude ODE for :math:`A(T_1)` obtained from the resonant sine
+        coefficient (``None`` if none was found).
+    solvability_B : sympy.Eq or None
+        The amplitude ODE for :math:`B(T_1)` obtained from the resonant cosine
+        coefficient (``None`` if none was found).
+    particular_solution : sympy.Expr
+        The order-:math:`k` particular solution with homogeneous initial
+        conditions applied. Also available as :attr:`solution`.
+    symbol : sympy.Function
+        The unknown :math:`u_k(T_0, T_1)`.
+
+    Attributes
+    ----------
+    order : int
+        Perturbation order :math:`k`.
+    pde : sympy.Eq
+        The order-:math:`k` governing PDE in :math:`(T_0, T_1)`. Exposed also
+        as :attr:`ode` and :attr:`equation` so the per-order interface matches
+        the other (ODE) hierarchy types.
+    secular_cos, secular_sin : sympy.Expr or None
+        The resonant coefficients whose vanishing gives the solvability
+        conditions. For the Duffing problem
+        :math:`u''+u+\varepsilon u^3=0` at order 1,
+        ``secular_sin`` is
+        :math:`2A'(T_1) - \tfrac34 A^2 B - \tfrac34 B^3`.
+    solvability_A : sympy.Eq or None
+        Amplitude ODE :math:`A'(T_1) = \ldots`. For the damped oscillator
+        this is :math:`A'(T_1) = -A/2`.
+    solvability_B : sympy.Eq or None
+        Amplitude ODE :math:`B'(T_1) = \ldots`.
+    particular_solution : sympy.Expr
+        Order-:math:`k` solution after applying homogeneous initial
+        conditions.
+    solution : sympy.Expr
+        Alias of :attr:`particular_solution`.
+
+    See Also
+    --------
+    MultScalesHierarchy : The container whose ``sol[k]`` yields these entries.
+
+    Examples
+    --------
+    >>> from asymptotics import ODE
+    >>> eq = ODE("u'' + u + eps*u'",
+    ...          dependent='u', small_param='eps', independent='t',
+    ...          conditions=["u(0) = 1", "u'(0) = 0"])
+    >>> sol = eq.expand_multiple_scales(order=1)
+    >>> entry = sol[1]
+    >>> entry.solvability_A
+    Eq(Derivative(A(T_1), T_1), -A(T_1)/2)
+    >>> entry.secular
+    True
+    >>> entry.ode is entry.pde
+    True
+    """
 
     def __init__(self, order, pde, secular_cos, secular_sin,
                  solvability_A, solvability_B,
@@ -231,20 +501,92 @@ def _secular_coefficients(forcing, T0, omega0):
 # ---------------------------------------------------------------------------
 
 def expand_multiple_scales(problem, order: int = 1) -> MultScalesHierarchy:
-    """
+    r"""
     Apply the method of multiple scales to a nonlinear oscillator ODE.
+
+    Solves a weakly perturbed second-order oscillator of the form
+
+    .. math::
+
+        u'' + \omega_0^2\, u + \varepsilon\, f(u, u', t) = 0
+
+    by introducing independent fast and slow time scales,
+
+    .. math::
+
+        T_0 = t, \qquad T_1 = \varepsilon\, t,
+
+    and expanding :math:`u = u_0(T_0, T_1) + \varepsilon\,u_1(T_0, T_1) +
+    \cdots`. The leading-order solution is
+
+    .. math::
+
+        u_0 = A(T_1)\cos(\omega_0 T_0) + B(T_1)\sin(\omega_0 T_0),
+
+    with amplitudes that vary on the slow scale. At order :math:`\varepsilon`
+    the demand that :math:`u_1` be free of secular (resonant) forcing yields
+    the **solvability conditions** — ODEs in :math:`T_1` for :math:`A` and
+    :math:`B` — which are integrated with the initial data
+    :math:`A(0) = u(0)`, :math:`B(0) = u'(0)/\omega_0`. Unlike
+    Lindstedt–Poincaré, this method handles damping and other non-conservative
+    perturbations (e.g. :math:`u'' + u + \varepsilon u' = 0`, whose amplitude
+    obeys :math:`A'(T_1) = -A/2`, reproducing the decaying envelope
+    :math:`e^{-\varepsilon t/2}`).
+
+    The leading frequency :math:`\omega_0` is auto-detected from the
+    unperturbed equation as :math:`\sqrt{c_u / c_{u''}}`.
 
     Parameters
     ----------
     problem : ODE
-        2nd-order oscillator: u'' + omega_0^2*u + eps*f(u,u',t) = 0
-    order : int
-        Number of epsilon corrections (default 1). Each order adds one
-        slow-time scale T_k = eps^k * t.
+        A second-order oscillator containing the small parameter,
+        :math:`u'' + \omega_0^2 u + \varepsilon f(u, u', t) = 0`.
+    order : int, optional
+        Number of :math:`\varepsilon` corrections (default 1). The returned
+        hierarchy holds orders ``0`` through ``order``.
 
     Returns
     -------
     MultScalesHierarchy
+        The order-by-order result, including the solved amplitudes
+        :attr:`~MultScalesHierarchy.amplitude_A` /
+        :attr:`~MultScalesHierarchy.amplitude_B` and the assembled
+        physical-time solution :attr:`~MultScalesHierarchy.expansion_t`.
+
+    Raises
+    ------
+    NoSmallParameterError
+        If the small parameter does not appear in the equation.
+    ValueError
+        If the ODE is not second order, or if the unperturbed frequency
+        squared is non-positive (non-oscillatory).
+
+    Notes
+    -----
+    Called through the convenience method
+    ``ODE.expand_multiple_scales(order)``.
+
+    For a nonlinear conservative problem such as the Duffing oscillator the
+    coupled amplitude ODEs need not have a closed-form SymPy solution; in that
+    case :attr:`~MultScalesHierarchy.amplitude_A` /
+    :attr:`~MultScalesHierarchy.amplitude_B` remain symbolic while the
+    solvability conditions themselves are still reported per order.
+
+    Examples
+    --------
+    Damped linear oscillator (closed-form slow amplitude):
+
+    >>> from asymptotics import ODE
+    >>> eq = ODE("u'' + u + eps*u'",
+    ...          dependent='u', small_param='eps', independent='t',
+    ...          conditions=["u(0) = 1", "u'(0) = 0"])
+    >>> sol = eq.expand_multiple_scales(order=1)
+    >>> sol.entries[1].solvability_A          # solvability condition on A(T_1)
+    Eq(Derivative(A(T_1), T_1), -A(T_1)/2)
+    >>> sol.amplitude_A
+    exp(-T_1/2)
+    >>> sol.expansion_t
+    exp(-eps*t/2)*cos(t)
     """
     from asymptotics.core.exceptions import NoSmallParameterError
 

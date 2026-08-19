@@ -1,6 +1,6 @@
 """
 asymptotics.latex_export
-=====================
+========================
 Export perturbation expansion results as LaTeX source.
 
 Usage
@@ -50,34 +50,82 @@ def _write(filename, content):
 
 def to_latex(hierarchy, environment='align', show_orders=False,
              filename=None):
-    # Guard against string booleans e.g. show_orders='False'
-    if isinstance(show_orders, str):
-        show_orders = show_orders.lower() not in ('false', '0', 'no', '')
-    """
-    Export a perturbation hierarchy as LaTeX source.
+    r"""
+    Export a perturbation hierarchy as ready-to-paste LaTeX source.
+
+    Dispatches on the hierarchy type to produce a tailored layout (algebraic
+    expansion, ODE expansion, Lindstedt frequency + strained/physical time,
+    multiple-scales amplitudes, matched inner/outer boundary-layer solution, a
+    coupled algebraic system, or a coupled ODE system).  The output is a plain
+    string containing ``%``
+    comments and one or more math environments; it is also written to a file or
+    printed to the console as a side effect.
+
+    The small parameter is **always** rendered as ``\varepsilon`` regardless of
+    the symbol name used in the original problem (``eps``, ``delta``, ...), and
+    each expansion is closed with an explicit
+    :math:`\mathcal{O}(\varepsilon^{N+1})` remainder term.
 
     Parameters
     ----------
-    hierarchy : any perturbation hierarchy
-    environment : str
-        LaTeX math environment — 'align', 'equation', or 'gather'.
-        Default 'align'.
-    show_orders : bool
-        If True, show each order u_k separately in addition to
-        the expansion. Default False.
+    hierarchy : perturbation hierarchy
+        Any supported hierarchy: ``OrderHierarchy`` (algebraic),
+        ``ODEHierarchy``, ``LindstedtHierarchy``, ``MultScalesHierarchy``,
+        ``BoundaryLayerHierarchy``, ``SystemHierarchy`` (coupled algebraic
+        system), or ``ODESystemHierarchy`` (coupled ODE system).
+    environment : str, optional
+        LaTeX math environment used to wrap each block — ``'align'`` (default),
+        ``'equation'``, or ``'gather'``.
+    show_orders : bool, optional
+        If ``True``, additionally list each order term (:math:`u_k`, and the
+        :math:`\omega_k` frequency corrections for Lindstedt) separately, in
+        addition to the assembled expansion.  Default ``False``.  A string
+        value is coerced to a bool (``'false'``, ``'0'``, ``'no'``, ``''`` map
+        to ``False``).
     filename : str, optional
-        If given, write output to this file. Otherwise print to console.
+        If given, the LaTeX source is written to this file (and a confirmation
+        line is printed).  Otherwise the source is printed to the console.  In
+        both cases the string is returned.
 
     Returns
     -------
-    str — the LaTeX source string
+    str
+        The LaTeX source string.
+
+    Raises
+    ------
+    TypeError
+        If ``hierarchy`` is not one of the supported hierarchy types.
+
+    Examples
+    --------
+    >>> from asymptotics import AlgebraicEquation, to_latex
+    >>> eq  = AlgebraicEquation("x**3 + eps*x - 1",
+    ...                         dependent="x", small_param="eps")
+    >>> sol = eq.expand_regular(order=3)
+    >>> src = to_latex(sol)   # doctest: +NORMALIZE_WHITESPACE
+    % Regular perturbation — algebraic
+    <BLANKLINE>
+    % Expansion expansion
+    <BLANKLINE>
+    \begin{align}
+      x(\varepsilon) &= \frac{\varepsilon^{3}}{81} - \frac{\varepsilon}{3} + 1 + \mathcal{O}(\varepsilon^{4})
+    \end{align}
+    >>> src.startswith('% Regular perturbation')
+    True
+    >>> r'\varepsilon' in src
+    True
     """
+    # Guard against string booleans e.g. show_orders='False'
+    if isinstance(show_orders, str):
+        show_orders = show_orders.lower() not in ('false', '0', 'no', '')
     from asymptotics.methods.regular_ode      import ODEHierarchy
     from asymptotics.methods.lindstedt        import LindstedtHierarchy
     from asymptotics.methods.multiple_scales  import MultScalesHierarchy
     from asymptotics.methods.boundary_layer   import BoundaryLayerHierarchy
     from asymptotics.methods.regular_ode_system import ODESystemHierarchy
     from asymptotics.core.hierarchy           import OrderHierarchy
+    from asymptotics.core.system_hierarchy     import SystemHierarchy
 
     if isinstance(hierarchy, LindstedtHierarchy):
         content = _latex_lindstedt(hierarchy, environment, show_orders)
@@ -87,6 +135,8 @@ def to_latex(hierarchy, environment='align', show_orders=False,
         content = _latex_boundary_layer(hierarchy, environment)
     elif isinstance(hierarchy, ODESystemHierarchy):
         content = _latex_ode_system(hierarchy, environment, show_orders)
+    elif isinstance(hierarchy, SystemHierarchy):
+        content = _latex_system(hierarchy, environment, show_orders)
     elif isinstance(hierarchy, ODEHierarchy):
         content = _latex_ode(hierarchy, environment, show_orders)
     elif isinstance(hierarchy, OrderHierarchy):
@@ -372,6 +422,51 @@ def _latex_ode_system(h, environment, show_orders):
         remainder = _order_remainder(N + 1)
         lines.append(_wrap(
             f"  {var}(t,\\varepsilon) &= {comp} + {remainder}",
+            environment
+        ))
+        lines.append("\n")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Algebraic system
+# ---------------------------------------------------------------------------
+
+def _latex_system(h, environment, show_orders):
+    """LaTeX for a coupled *algebraic* system (SystemHierarchy).
+
+    Mirrors :func:`_latex_ode_system` but the unknowns are scalars, so each
+    per-order term is ``OrderEntry.solution`` (there are no initial/boundary
+    conditions and hence no separate particular solution) and the expansion is
+    written as ``x(varepsilon) = ...`` without an independent variable.
+    """
+    eps = h.small_param
+    N   = len(h.hierarchies[h.variables[0]]) - 1
+    lines = []
+
+    lines.append(_comment("Regular perturbation — coupled algebraic system"))
+    lines.append("\n")
+
+    for var in h.variables:
+        vh = h.hierarchies[var]
+
+        if show_orders:
+            lines.append(_comment(f"Order-by-order: {var}"))
+            order_lines = []
+            for e in sorted(vh.entries, key=lambda e: e.order):
+                sol_str = _eps_latex(e.solution, eps)
+                order_lines.append(
+                    f"  {var}_{{{e.order}}} &= {sol_str}"
+                )
+            lines.append(_wrap(" \\\\\n".join(order_lines), environment))
+            lines.append("\n")
+
+        lines.append(_comment(f"Expansion: {var}"))
+        comp = _eps_latex(vh.expansion, eps)
+        remainder = _order_remainder(N + 1)
+        lines.append(_wrap(
+            f"  {var}(\\varepsilon) &= {comp} + {remainder}",
             environment
         ))
         lines.append("\n")

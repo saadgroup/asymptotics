@@ -1,6 +1,6 @@
 """
 asymptotics.methods.regular_ode
-============================
+===============================
 Regular perturbation expansion for ODEs F(u, u', u'', t, ε) = 0.
 
 Algorithm
@@ -57,15 +57,67 @@ from asymptotics.gauge import parse_gauge, extract_coefficients
 
 
 class ODEHierarchy:
-    """
-    Perturbation hierarchy for a single ODE.
+    r"""
+    Regular-perturbation hierarchy for a single ordinary differential equation.
+
+    An ``ODEHierarchy`` is the object returned by :meth:`ODE.expand_regular`
+    (and by the module-level :func:`expand_regular_ode`).  It stores the
+    order-by-order results of the regular perturbation expansion together with
+    the assembled expansion, and exposes the four-method result API shared by
+    every hierarchy in :mod:`asymptotics` (:meth:`show`, :meth:`eval`,
+    :meth:`compare_numeric`, :meth:`to_latex`).
+
+    The underlying expansion writes the solution as a power series in the small
+    parameter :math:`\varepsilon`,
+
+    .. math::
+
+        u(t, \varepsilon) = \sum_{k=0}^{N} u_k(t)\, \varepsilon^{k}
+                          = u_0(t) + \varepsilon\, u_1(t)
+                          + \varepsilon^{2}\, u_2(t) + \cdots ,
+
+    where each :math:`u_k(t)` solves a *linear* ODE obtained by collecting the
+    coefficient of :math:`\varepsilon^{k}` after substituting the ansatz into
+    the original equation.  (A non-standard *gauge* sequence
+    :math:`\{\delta_k(\varepsilon)\}` replaces :math:`\varepsilon^{k}`; see
+    :func:`expand_regular_ode`.)
+
+    Indexing (``sol[k]``) returns the :class:`ODEOrderEntry` for order ``k``,
+    and ``len(sol)`` is the number of orders (``order + 1``).
 
     Attributes
     ----------
     entries : list of ODEOrderEntry
-    expansion : Expr  — the assembled expansion
-    small_param : Symbol
-    independent : Symbol
+        One :class:`ODEOrderEntry` per order, 0-indexed, from order 0 up to
+        and including ``order``.
+    expansion : sympy.Expr
+        The assembled expansion :math:`\sum_k u_k(t)\,\varepsilon^{k}`, with all
+        integration constants already fixed by the initial/boundary conditions.
+    small_param : sympy.Symbol
+        The small parameter :math:`\varepsilon`.
+    independent : sympy.Symbol
+        The independent variable (e.g. :math:`t`).
+
+    See Also
+    --------
+    expand_regular_ode : The function that builds this hierarchy.
+    ODEOrderEntry : Per-order record accessed via ``sol[k]``.
+
+    Examples
+    --------
+    A first-order IVP :math:`u' + u + \varepsilon u^2 = 0`, :math:`u(0)=1`:
+
+    >>> import matplotlib; matplotlib.use('Agg')
+    >>> from asymptotics import ODE
+    >>> eq = ODE("u' + u + eps*u**2", dependent="u", small_param="eps",
+    ...          independent="t", conditions=["u(0) = 1"])   # doctest: +SKIP
+    >>> sol = eq.expand_regular(order=2)                     # doctest: +SKIP
+    >>> len(sol)                                             # doctest: +SKIP
+    3
+    >>> sol[0].particular_solution                           # doctest: +SKIP
+    exp(-t)
+    >>> sol.expansion                                        # doctest: +SKIP
+    eps**2*(exp(-t) - 2*exp(-2*t) + exp(-3*t)) + eps*(-exp(-t) + exp(-2*t)) + exp(-t)
     """
 
     def __init__(self):
@@ -78,35 +130,114 @@ class ODEHierarchy:
         self._problem_type = ""   # "ivp" or "bvp"
 
     def __getitem__(self, order: int):
+        """
+        Return the :class:`ODEOrderEntry` for a given order.
+
+        Parameters
+        ----------
+        order : int
+            Perturbation order ``k``, ``0 <= k <= N``.  Standard Python
+            indexing semantics apply (negative indices count from the end).
+
+        Returns
+        -------
+        ODEOrderEntry
+            The per-order record holding the order-``k`` ODE and its general and
+            particular solutions.
+
+        Examples
+        --------
+        >>> sol[0].particular_solution      # leading-order solution   # doctest: +SKIP
+        >>> sol[1].equation                 # order-1 ODE               # doctest: +SKIP
+        """
         return self.entries[order]
 
     def __len__(self):
+        """
+        Return the number of orders stored (``order + 1``).
+
+        Returns
+        -------
+        int
+            One more than the requested expansion order, since order 0 (the
+            leading order) is included.
+
+        Examples
+        --------
+        >>> len(eq.expand_regular(order=2))      # doctest: +SKIP
+        3
+        """
         return len(self.entries)
 
 
     def compare_numeric(self, eps, params=None, **kwargs):
-        """
-        Compare this expansion against a numerical solution.
+        r"""
+        Compare this perturbation expansion against a numerical solution.
+
+        Numerically integrates the original ODE with SciPy
+        (:func:`scipy.integrate.solve_ivp` for an IVP, a BVP solver for a BVP)
+        at the requested value of :math:`\varepsilon`, evaluates the assembled
+        perturbation :attr:`expansion` on the same grid, and returns both
+        together with error norms and a comparison figure.  Use this to gauge
+        how well the truncated expansion tracks the true solution — the two
+        curves should agree closely for small :math:`\varepsilon` and drift
+        apart as it grows.
 
         Parameters
         ----------
         eps : float
-            Value of the small parameter ε to use.
-        problem : ODE, optional
-            The original problem object. Defaults to the equation
-            used to create this hierarchy — usually not needed.
+            Value of the small parameter :math:`\varepsilon` at which to
+            compare.
+        params : dict, optional
+            Numerical values for any extra free symbols appearing in the
+            equation, as ``{name_or_symbol: value}``.
         **kwargs
-            plot_range : [a, b]  — domain for plotting (ODE only)
-            n_points  : int     — number of plot points (default 300)
+            ``plot_range`` : ``[a, b]``
+                Domain over which to integrate and plot.  Defaults to the
+                domain implied by the problem's conditions.
+            ``n_points`` : int
+                Number of sample points (default 300).
+            ``filename`` : str
+                If given, save the figure to this path.
 
         Returns
         -------
-        dict with keys:
-            't' or 'x'    : ndarray — evaluation points
-            'u_pert'      : ndarray — perturbation expansion
-            'u_numerical' : ndarray — numerical solution
-            'fig'         : matplotlib Figure
-            (boundary layer also returns 'u_outer', 'u_inner', 'u_expansion')
+        dict
+            Dictionary with keys:
+
+            ``'t'`` : ndarray
+                Evaluation grid (independent-variable values).
+            ``'u_pert'`` : dict
+                Perturbation expansion sampled on the grid, keyed by the
+                :math:`\varepsilon` value(s).
+            ``'u_numerical'`` : ndarray
+                The SciPy reference solution.
+            ``'errors'`` : dict
+                L2/Linf absolute and relative errors, keyed by
+                :math:`\varepsilon`.
+            ``'settings'`` : dict
+                The SciPy solver, method, and tolerances used (for reproducible
+                reporting).
+            ``'fig'`` : matplotlib.figure.Figure
+                The comparison plot.
+
+        Notes
+        -----
+        This routine imports :mod:`matplotlib`.  In a headless environment or a
+        script, select a non-interactive backend before calling, e.g.::
+
+            import matplotlib; matplotlib.use('Agg')
+
+        Examples
+        --------
+        >>> import matplotlib; matplotlib.use('Agg')
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u' + u + eps*u**2", dependent="u", small_param="eps",
+        ...          independent="t", conditions=["u(0) = 1"])   # doctest: +SKIP
+        >>> sol = eq.expand_regular(order=2)                     # doctest: +SKIP
+        >>> res = sol.compare_numeric(eps=0.1)                  # doctest: +SKIP
+        >>> sorted(res.keys())                                  # doctest: +SKIP
+        ['errors', 'fig', 'settings', 't', 'u_numerical', 'u_pert']
         """
         from asymptotics.numerics import compare_numeric
         problem = getattr(self, '_problem', None)
@@ -114,27 +245,46 @@ class ODEHierarchy:
 
 
     def to_latex(self, environment='align', show_orders=False, filename=None):
-        """
+        r"""
         Export this expansion as LaTeX source.
+
+        Renders the assembled :attr:`expansion` (and, optionally, each order
+        :math:`u_k` separately) as a LaTeX math block.  The small parameter is
+        always typeset as ``\varepsilon`` regardless of the symbol name used in
+        the problem.
 
         Parameters
         ----------
-        environment : str
-            LaTeX math environment: 'align' (default), 'equation', or 'gather'.
-        show_orders : bool
-            If True, include each order u_k separately. Default False.
+        environment : str, optional
+            LaTeX math environment: ``'align'`` (default), ``'equation'``, or
+            ``'gather'``.
+        show_orders : bool, optional
+            If True, list each order :math:`u_k(t)` on its own line in addition
+            to the assembled expansion.  Default False.
         filename : str, optional
-            If given, write to this file. Otherwise print to console.
+            If given, write the LaTeX source to this file.  The source string is
+            returned in every case.
 
         Returns
         -------
-        str — the LaTeX source string
+        str
+            The LaTeX source string.
 
         Examples
         --------
-        >>> print(sol.to_latex())
-        >>> sol.to_latex(filename="result.tex")
-        >>> sol.to_latex(environment='equation', show_orders=True)
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u' + u + eps*u**2", dependent="u", small_param="eps",
+        ...          independent="t", conditions=["u(0) = 1"])   # doctest: +SKIP
+        >>> sol = eq.expand_regular(order=2)                     # doctest: +SKIP
+        >>> src = sol.to_latex()                                # doctest: +SKIP
+        >>> print(src)                                          # doctest: +SKIP
+        % Regular perturbation — ODE (IVP)
+        ...
+        \begin{align}
+          u(t,\varepsilon) &= ... + \mathcal{O}(\varepsilon^{3})
+        \end{align}
+        >>> sol.to_latex(environment='equation', show_orders=True)  # doctest: +SKIP
+        >>> sol.to_latex(filename="result.tex")                     # doctest: +SKIP
         """
         from asymptotics.latex_export import to_latex
         return to_latex(self, environment=environment,
@@ -142,45 +292,178 @@ class ODEHierarchy:
 
 
     def eval(self, eps, at=None, params=None):
-        """
-        Evaluate the perturbation expansion at given eps and independent variable values.
+        r"""
+        Evaluate the perturbation expansion numerically.
+
+        Substitutes a concrete value of :math:`\varepsilon` into the assembled
+        :attr:`expansion` and evaluates it over an array of independent-variable
+        values, returning a NumPy array.  This is the numerical realisation of
+
+        .. math::
+
+            u(t, \varepsilon) \approx \sum_{k=0}^{N} u_k(t)\, \varepsilon^{k}.
 
         Parameters
         ----------
         eps : float or list of float
-            Value(s) of the small parameter.
-        at : array-like, optional
-            Values of the independent variable (for ODEs).
-            Not needed for algebraic equations.
+            Value(s) of the small parameter :math:`\varepsilon`.
+        at : array-like
+            Values of the independent variable :math:`t` on which to sample the
+            expansion.  Required for ODE hierarchies.
+        params : dict, optional
+            Numerical values for any extra free symbols in the expansion.
 
         Returns
         -------
-        For ODEs:
-            ndarray if eps is scalar, dict {eps: ndarray} if eps is a list
-        For algebraic:
-            float if eps is scalar, ndarray if eps is a list
+        numpy.ndarray or dict
+            If ``eps`` is a scalar, a 1-D array of the expansion sampled at the
+            points in ``at``.  If ``eps`` is a list, a dict mapping each
+            :math:`\varepsilon` value to its sampled array.
 
         Examples
         --------
-        >>> # ODE
-        >>> t_vals = np.linspace(0, 20, 300)
-        >>> u = sol.eval(eps=0.1, at=t_vals)           # ndarray
-        >>> u = sol.eval(eps=[0.1, 0.2], at=t_vals)    # dict {0.1: array, 0.2: array}
-        >>>
-        >>> # Algebraic
-        >>> x = sol.eval(eps=0.1)                       # float
-        >>> x = sol.eval(eps=[0.1, 0.2, 0.3])           # ndarray
+        >>> import numpy as np
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u' + u + eps*u**2", dependent="u", small_param="eps",
+        ...          independent="t", conditions=["u(0) = 1"])   # doctest: +SKIP
+        >>> sol = eq.expand_regular(order=2)                     # doctest: +SKIP
+        >>> t_vals = np.linspace(0, 20, 300)                     # doctest: +SKIP
+        >>> u = sol.eval(eps=0.1, at=t_vals)          # ndarray  # doctest: +SKIP
+        >>> multi = sol.eval(eps=[0.1, 0.2], at=t_vals)  # {0.1: array, 0.2: array}  # doctest: +SKIP
         """
         from asymptotics.eval import eval_hierarchy
         return eval_hierarchy(self, eps, at=at, params=params)
 
     def show(self, orders=None, mode: str = "auto") -> None:
+        r"""
+        Render the ODE hierarchy for inspection.
+
+        Displays, for each order, the linear ODE that :math:`u_k(t)` satisfies
+        together with its general solution (with free integration constants) and
+        its particular solution (constants fixed by the initial/boundary
+        conditions), followed by the assembled expansion.  Rendering adapts to
+        the environment: rich LaTeX in Jupyter, plain text in a terminal.
+
+        Parameters
+        ----------
+        orders : list of int, optional
+            Which orders to display.  Default: all orders.
+        mode : str, optional
+            ``"auto"`` (default) uses LaTeX in Jupyter and plain text
+            elsewhere; ``"jupyter"`` forces LaTeX via IPython; ``"text"`` forces
+            plain text.
+
+        Returns
+        -------
+        None
+            Output is printed/displayed as a side effect.
+
+        Examples
+        --------
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u' + u + eps*u**2", dependent="u", small_param="eps",
+        ...          independent="t", conditions=["u(0) = 1"])   # doctest: +SKIP
+        >>> sol = eq.expand_regular(order=2)                     # doctest: +SKIP
+        >>> sol.show(mode="text")                                # doctest: +SKIP
+        >>> sol.show(orders=[0, 1])                              # doctest: +SKIP
+        """
         from asymptotics.display.ode_display import show_ode
         show_ode(self, orders=orders, mode=mode)
 
 
 class ODEOrderEntry:
-    """All information about a single order of the ODE hierarchy."""
+    r"""
+    All information about a single order of an ODE perturbation hierarchy.
+
+    One ``ODEOrderEntry`` records everything the solver produced at a given
+    order ``k``: the linear ODE for :math:`u_k(t)`, its general solution (with
+    free integration constants) and its particular solution (constants fixed by
+    the problem's initial/boundary conditions), and whether secular terms were
+    detected.  Instances are created by :func:`expand_regular_ode` and reached
+    through ``sol[k]``.
+
+    At order ``k`` the coefficient of :math:`\varepsilon^{k}` in the substituted
+    equation gives a *linear* ODE of the schematic form
+
+    .. math::
+
+        \mathcal{L}\, u_k(t) = R_k\bigl(t;\, u_0, \dots, u_{k-1}\bigr),
+
+    where :math:`\mathcal{L}` is the linear operator of the leading-order problem
+    and the right-hand side :math:`R_k` depends only on the lower-order
+    solutions already known.  Solving this ODE gives a
+    :attr:`general_solution` containing free constants :math:`C_1, C_2, \dots`;
+    imposing the order-``k`` conditions fixes them and yields the
+    :attr:`particular_solution`.
+
+    Parameters
+    ----------
+    order : int
+        The perturbation order ``k`` this entry describes.
+    ode : sympy.Eq
+        The linear ODE that :math:`u_k(t)` satisfies, written as
+        ``Eq(<expr>, 0)``.
+    general_solution : sympy.Expr
+        Solution of ``ode`` with free integration constants (``C1``, ``C2``,
+        ...) still present.
+    particular_solution : sympy.Expr
+        The general solution after the integration constants have been fixed by
+        the initial/boundary conditions.
+    constants : dict
+        Mapping ``{C1: value, ...}`` giving the constant values determined from
+        the conditions.
+    symbol : sympy.Function
+        The unknown function :math:`u_k(t)` for this order.
+    secular : bool, optional
+        Whether secular (unbounded, e.g. :math:`t\sin t`) terms were detected in
+        the particular solution.  Default False.
+
+    Attributes
+    ----------
+    order : int
+        The perturbation order ``k``.
+    ode : sympy.Eq
+        The order-``k`` linear ODE, ``Eq(<expr>, 0)``.
+    general_solution : sympy.Expr
+        Order-``k`` solution with free integration constants.
+    particular_solution : sympy.Expr
+        Order-``k`` solution with constants fixed by ICs/BCs.  Also available as
+        ``solution`` for display compatibility.
+    secular : bool
+        True if secular terms were detected at this order.  Regular perturbation
+        does not remove them — that is the domain of the Lindstedt–Poincaré and
+        multiple-scales methods.
+    constants : dict
+        The determined integration constants ``{C1: value, ...}``.
+    symbol : sympy.Function
+        The unknown function :math:`u_k(t)`.
+    equation : sympy.Eq
+        Uniform per-order alias for :attr:`ode`; ``sol[k].equation`` is the
+        order-``k`` equation across every hierarchy type in :mod:`asymptotics`.
+
+    Notes
+    -----
+    The difference between :attr:`general_solution` and
+    :attr:`particular_solution` is exactly the integration constants: the
+    general solution is the full family that solves the order-``k`` ODE, while
+    the particular solution is the single member of that family selected by the
+    initial conditions (IVP) or boundary conditions (BVP).
+
+    Examples
+    --------
+    >>> from asymptotics import ODE
+    >>> eq = ODE("u' + u + eps*u**2", dependent="u", small_param="eps",
+    ...          independent="t", conditions=["u(0) = 1"])   # doctest: +SKIP
+    >>> sol = eq.expand_regular(order=2)                     # doctest: +SKIP
+    >>> sol[1].equation                                      # doctest: +SKIP
+    Eq(u_1(t) - sinh(2*t) + cosh(2*t) + Derivative(u_1(t), t), 0)
+    >>> sol[1].general_solution                              # free constant C1  # doctest: +SKIP
+    (C1 + exp(-t))*exp(-t)
+    >>> sol[1].particular_solution                           # C1 fixed by u(0)=0  # doctest: +SKIP
+    -exp(-t) + exp(-2*t)
+    >>> sol[1].secular                                       # doctest: +SKIP
+    False
+    """
 
     def __init__(self, order, ode, general_solution,
                  particular_solution, constants, symbol, secular=False):
@@ -282,19 +565,100 @@ def _apply_limit_condition(cond, gen_expr, t_sym, dep_name, deriv_syms, order_k,
     return True  # condition automatically satisfied
 
 def expand_regular_ode(problem, order: int = 2, gauge=None) -> ODEHierarchy:
-    """
-    Apply regular perturbation theory to an ODE.
+    r"""
+    Apply regular perturbation theory to an ordinary differential equation.
+
+    Constructs the regular (Poincaré) perturbation expansion of an ODE
+    :math:`F(u, u', u'', \dots, t, \varepsilon) = 0` subject to its
+    initial/boundary conditions, and returns the full order-by-order hierarchy.
+    This is the engine behind :meth:`asymptotics.ODE.expand_regular`; call that
+    method rather than this function directly in normal use.
+
+    The solution is sought as a power series in the small parameter,
+
+    .. math::
+
+        u(t, \varepsilon) = \sum_{k=0}^{N} u_k(t)\, \delta_k(\varepsilon),
+
+    where by default :math:`\delta_k(\varepsilon) = \varepsilon^{k}` (the
+    standard gauge :math:`\{1, \varepsilon, \varepsilon^2, \dots\}`).
+    Substituting this ansatz into :math:`F` and collecting the coefficient of
+    each gauge function yields, at order ``k``, a *linear* ODE for
+    :math:`u_k(t)` whose forcing depends only on the already-known lower-order
+    solutions:
+
+    .. math::
+
+        \mathcal{L}\, u_k(t) = R_k\bigl(t;\, u_0, \dots, u_{k-1}\bigr).
+
+    Each order is solved with :func:`sympy.dsolve` and its free integration
+    constants are fixed by imposing the order-``k`` conditions (the leading
+    order absorbs the inhomogeneous condition values; higher orders satisfy the
+    homogeneous versions, except where a condition value itself carries an
+    :math:`\varepsilon`-dependence, which is distributed across orders).
+    Secular terms are detected and flagged but never removed — that is the
+    province of the Lindstedt–Poincaré and multiple-scales methods.
 
     Parameters
     ----------
-    problem : ODE
-    order : int
-    gauge : str, list of str, or None
-        Non-standard gauge sequence. See asymptotics.gauge.parse_gauge.
+    problem : asymptotics.ODE
+        The ODE problem to expand.  Supplies the equation, small parameter,
+        independent/dependent variables, and the initial/boundary conditions.
+    order : int, optional
+        Highest order ``N`` to compute.  The resulting hierarchy has
+        ``order + 1`` entries (orders 0 through ``N``).  Default 2.
+    gauge : str, list of str, or None, optional
+        Non-standard gauge (asymptotic) sequence overriding the default
+        :math:`\{\varepsilon^{k}\}`.  A single string such as ``"sqrt(eps)"``
+        seeds a geometric sequence :math:`\{\delta^{k}\}`; a list of strings
+        such as ``["1", "log(eps)", "log(eps)**2"]`` specifies the sequence
+        term by term.  Parsed by :func:`asymptotics.gauge.parse_gauge`.
 
     Returns
     -------
     ODEHierarchy
+        The assembled hierarchy, indexable by order (``sol[k]``) and exposing
+        the ``show`` / ``eval`` / ``compare_numeric`` / ``to_latex`` API.
+
+    Raises
+    ------
+    NoSmallParameterError
+        If the small parameter :math:`\varepsilon` does not appear in the
+        equation, so there is nothing to expand in.
+    NoLeadingOrderSolutionError
+        If :func:`sympy.dsolve` cannot solve the leading-order (order 0) ODE.
+    NoHigherOrderSolutionError
+        If a higher-order ODE cannot be solved, or its integration constants
+        cannot be determined from the conditions.
+
+    See Also
+    --------
+    ODEHierarchy : The returned object.
+    asymptotics.ODE.expand_regular : The public entry point that calls this.
+
+    Examples
+    --------
+    First-order IVP :math:`u' + u + \varepsilon u^2 = 0`, :math:`u(0)=1`:
+
+    >>> from asymptotics import ODE
+    >>> eq = ODE("u' + u + eps*u**2", dependent="u", small_param="eps",
+    ...          independent="t", conditions=["u(0) = 1"])   # doctest: +SKIP
+    >>> sol = eq.expand_regular(order=2)                     # doctest: +SKIP
+    >>> sol[0].particular_solution                           # doctest: +SKIP
+    exp(-t)
+    >>> sol.expansion                                        # doctest: +SKIP
+    eps**2*(exp(-t) - 2*exp(-2*t) + exp(-3*t)) + eps*(-exp(-t) + exp(-2*t)) + exp(-t)
+
+    A linear BVP :math:`u'' + \varepsilon u = 0`, :math:`u(0)=0`, :math:`u(1)=1`,
+    where the higher orders satisfy homogeneous boundary conditions:
+
+    >>> eq = ODE("u'' + eps*u", dependent="u", small_param="eps",
+    ...          independent="t", conditions=["u(0) = 0", "u(1) = 1"])  # doctest: +SKIP
+    >>> sol = eq.expand_regular(order=2)                     # doctest: +SKIP
+    >>> sol[0].particular_solution                           # doctest: +SKIP
+    t
+    >>> sol[1].particular_solution                           # doctest: +SKIP
+    -t**3/6 + t/6
     """
     eps    = problem.small_param
     t      = problem._indep_sym

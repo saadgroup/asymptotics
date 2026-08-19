@@ -179,5 +179,44 @@ class TestErrorChecking:
             )
 
 
+class TestSystemToLatex:
+    """LaTeX export for a coupled algebraic system (regression: this used to
+    raise TypeError because the to_latex dispatcher had no SystemHierarchy
+    branch)."""
+
+    def _sol(self, order=3, small_param="eps"):
+        p = small_param
+        sys = AlgebraicSystem(
+            equations   = [f"x**2 + {p}*y - 1", f"y**2 + {p}*x - 1"],
+            dependents  = ["x", "y"],
+            small_param = p,
+        )
+        return sys.expand_regular(order=order)
+
+    def test_to_latex_runs_and_returns_string(self):
+        src = self._sol().to_latex()
+        assert isinstance(src, str)
+        assert src.startswith('%')
+        # one expansion block per variable
+        assert r'x(\varepsilon)' in src
+        assert r'y(\varepsilon)' in src
+        assert r'\begin{align}' in src
+
+    def test_to_latex_show_orders(self):
+        src = self._sol().to_latex(show_orders=True)
+        assert 'x_{0}' in src and 'x_{1}' in src
+        assert 'y_{0}' in src and 'y_{1}' in src
+
+    def test_to_latex_renders_varepsilon_for_any_symbol(self):
+        # a non-standard small-parameter name must still render as \varepsilon
+        src = self._sol(order=2, small_param="delta").to_latex()
+        assert r'\varepsilon' in src
+        assert 'delta' not in src
+
+    def test_to_latex_environment(self):
+        src = self._sol().to_latex(environment='gather')
+        assert r'\begin{gather}' in src
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

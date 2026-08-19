@@ -1,32 +1,68 @@
-"""
+r"""
 asymptotics.methods.boundary_layer
-================================
-Matched asymptotic expansions for linear singular perturbation BVPs.
+==================================
+Matched asymptotic expansions (boundary-layer theory) for linear singularly
+perturbed boundary-value problems.
 
-For equations of the form:
-    eps * u'' + p(x) * u' + q(x) * u = f(x)
-    u(a) = alpha,  u(b) = beta
+This module handles second-order two-point BVPs in which a small parameter
+:math:`\varepsilon \ll 1` multiplies the highest derivative,
 
-where eps << 1 multiplies the highest derivative.
+.. math::
 
-Algorithm
----------
-1. Detect layer location from sign of p(x) at boundaries:
-   - p(a) > 0  =>  layer at x = a  (left boundary)
-   - p(b) < 0  =>  layer at x = b  (right boundary)
+    \varepsilon\, u''(x) + p(x)\, u'(x) + q(x)\, u(x) = f(x),
+    \qquad u(a) = \alpha, \quad u(b) = \beta .
 
-2. Outer solution: solve reduced ODE (eps=0), apply far BC.
+Because :math:`\varepsilon` multiplies :math:`u''`, setting
+:math:`\varepsilon = 0` drops the order of the equation from two to one: the
+*reduced* (outer) problem cannot satisfy both boundary conditions. The
+solution therefore develops a thin **boundary layer** of width
+:math:`\mathcal{O}(\varepsilon)` at one end, across which :math:`u` changes
+rapidly to pick up the boundary condition the outer solution had to abandon.
 
-3. Inner solution: introduce stretched coordinate
-   - Layer at x=a: xi = (x-a)/eps
-   - Layer at x=b: xi = (b-x)/eps
-   Solve leading-order inner ODE with near BC.
+Method (leading order)
+----------------------
+1. **Layer location** — inferred from the sign of :math:`p` at the endpoints:
 
-4. Matching: inner limit as xi->inf must equal outer limit at boundary.
+   - :math:`p(a) > 0` → layer at the left boundary :math:`x = a`;
+   - :math:`p(b) < 0` → layer at the right boundary :math:`x = b`.
 
-5. Expansion: u_comp = u_outer + u_inner - u_match
+2. **Outer solution** :math:`u_\mathrm{out}(x)` — solve the reduced equation
+   :math:`p\,u' + q\,u = f` (set :math:`\varepsilon = 0`) subject to the
+   boundary condition at the *far* boundary (the one away from the layer).
 
-Each step is stored for inspection.
+3. **Inner solution** :math:`U(\xi)` — rescale with the stretched
+   boundary-layer coordinate
+
+   .. math::
+
+       \xi = \frac{x - a}{\varepsilon} \quad\text{(left layer)}, \qquad
+       \xi = \frac{b - x}{\varepsilon} \quad\text{(right layer)},
+
+   giving the leading-order inner equation :math:`U'' + p_\ell\, U' = 0`
+   (with :math:`p_\ell = p` evaluated at the layer), solved with the boundary
+   condition at the *near* boundary.
+
+4. **Matching** — the inner and outer descriptions must agree in the overlap
+   region:
+
+   .. math::
+
+       \lim_{\xi \to \infty} U(\xi) = \lim_{x \to x_\ell} u_\mathrm{out}(x) .
+
+5. **Composite (uniform) expansion** — add the two and subtract the common
+   overlap value so neither region is double-counted:
+
+   .. math::
+
+       u_\mathrm{comp}(x) = u_\mathrm{out}(x) + U(\xi) - u_\mathrm{match},
+       \qquad \xi = \xi(x).
+
+Every intermediate object (ODEs, outer/inner solutions, matching constant,
+composite) is stored on the returned :class:`BoundaryLayerHierarchy` and is a
+live SymPy expression; see :attr:`BoundaryLayerHierarchy.components`.
+
+Only leading order (``order=0``) is currently implemented; interior layers
+(where :math:`p` changes sign inside :math:`(a, b)`) are not supported.
 """
 
 from __future__ import annotations
@@ -42,23 +78,77 @@ from sympy import (
 # ---------------------------------------------------------------------------
 
 class BoundaryLayerHierarchy:
-    """
-    Result of a boundary layer (matched asymptotic) expansion.
+    r"""
+    Result of a boundary-layer (matched asymptotic) expansion.
+
+    Returned by :func:`expand_boundary_layer` and by
+    :meth:`asymptotics.ODE.expand_boundary_layer`. It bundles every stage of
+    the matched-asymptotics construction — outer solution, inner
+    (boundary-layer) solution, matching constant, and the uniform composite —
+    as inspectable SymPy expressions, and exposes the shared hierarchy API
+    (:meth:`show`, :meth:`eval`, :meth:`to_latex`, :meth:`compare_numeric`).
+
+    The central result is the additive **composite expansion**
+
+    .. math::
+
+        u_\mathrm{comp}(x)
+            = u_\mathrm{out}(x) + U\!\big(\xi(x)\big) - u_\mathrm{match},
+
+    stored on :attr:`expansion`, where :math:`\xi = (x-a)/\varepsilon` for a
+    left layer or :math:`\xi = (b-x)/\varepsilon` for a right layer.
 
     Attributes
     ----------
-    outer           : Expr   — outer solution u_out(x)
-    inner           : Expr   — inner solution U(xi)
-    inner_xi        : Expr   — inner in original variable: U((x-a)/eps)
-    match           : Expr   — matching value (constant)
-    expansion       : Expr   — u_out + U(xi) - match, with xi substituted
-    layer_location  : str    — 'x=a' or 'x=b'
-    layer_var       : Symbol — the stretched coordinate xi
-    outer_bc        : str    — which BC the outer solution satisfies
-    inner_bc        : str    — which BC the inner solution satisfies
-    small_param     : Symbol
-    independent     : Symbol
-    omega_0         : None   (unused, for API consistency)
+    outer : sympy.Expr
+        Leading-order outer solution :math:`u_\mathrm{out}(x)`, satisfying the
+        reduced ODE and the far boundary condition.
+    inner : sympy.Expr
+        Leading-order inner (boundary-layer) solution :math:`U(\xi)`, written
+        in the stretched coordinate :math:`\xi`.
+    inner_xi : sympy.Expr
+        The inner solution re-expressed in the original variable, i.e.
+        :math:`U\!\big(\xi(x)\big)` with :math:`\xi` substituted back.
+    match : sympy.Expr
+        The matching constant :math:`u_\mathrm{match}` — the common value of
+        the inner (:math:`\xi \to \infty`) and outer (at the layer) limits;
+        subtracted in the composite to remove the overlap.
+    expansion : sympy.Expr
+        The uniform composite expansion :math:`u_\mathrm{comp}(x)`.
+    layer_location : str
+        Human-readable layer position, e.g. ``'x = 0'`` or ``'x = 1'``.
+    layer_var : sympy.Symbol
+        The stretched boundary-layer coordinate :math:`\xi`.
+    outer_ode, inner_ode : sympy.Eq
+        The reduced (outer) ODE and the leading-order inner ODE that were
+        solved.
+    outer_bc, inner_bc : str
+        Which boundary condition the outer / inner solution satisfies.
+    small_param : sympy.Symbol
+        The small parameter :math:`\varepsilon`.
+    independent : sympy.Symbol
+        The independent variable :math:`x`.
+    p_expr, q_expr, f_expr : sympy.Expr
+        The coefficient functions :math:`p(x)`, :math:`q(x)` and right-hand
+        side :math:`f(x)` extracted from the equation.
+
+    See Also
+    --------
+    components : the same substeps collected into a single dict.
+    expand_boundary_layer : the function that builds this object.
+
+    Examples
+    --------
+    >>> from asymptotics import ODE
+    >>> eq = ODE("eps*u'' + u' + u", dependent='u', small_param='eps',
+    ...          independent='x', conditions=['u(0) = 0', 'u(1) = 1'])
+    >>> sol = eq.expand_boundary_layer()
+    >>> sol.layer_location
+    'x = 0'
+    >>> sol.outer
+    exp(1 - x)
+    >>> sol.expansion
+    (1 - exp(x*(eps - 1)/eps))*exp(1 - x)
     """
 
     def __init__(self):
@@ -84,22 +174,61 @@ class BoundaryLayerHierarchy:
 
     @property
     def components(self):
-        """Every intermediate substep as a dict of live SymPy objects.
+        r"""Every intermediate substep of the expansion, as live SymPy objects.
 
-        Rather than treating ``expand_boundary_layer()`` as a single opaque
-        call, each stage can be inspected, plotted, or reused independently::
+        Rather than treating :func:`expand_boundary_layer` as a single opaque
+        call, each stage of the matched-asymptotics construction can be
+        inspected, plotted, or reused independently.
 
-            parts = sol.components
-            parts['outer']        # leading-order outer solution  u_out(x)
-            parts['inner']        # inner solution in the stretched coord.  U(xi)
-            parts['inner_xi']     # inner solution back in x        U((x-a)/eps)
-            parts['match']        # matching constant
-            parts['composite']    # uniform composite expansion
-            parts['outer_ode']    # the reduced (outer) ODE that was solved
-            parts['inner_ode']    # the leading-order inner ODE
+        Returns
+        -------
+        dict
+            An ordered mapping with the following keys:
 
-        Each solution is a SymPy expression, ready for ``lambdify``/plotting or
-        further symbolic manipulation.
+            ``'layer_location'`` : str
+                Where the boundary layer sits, e.g. ``'x = 0'``.
+            ``'outer_ode'`` : sympy.Eq
+                The reduced ODE :math:`p(x)\,u' + q(x)\,u = f(x)`.
+            ``'outer'`` : sympy.Expr
+                Its solution :math:`u_\mathrm{out}(x)` (far boundary condition
+                applied).
+            ``'inner_ode'`` : sympy.Eq
+                The leading-order inner equation
+                :math:`U'' + p_\ell\, U' = 0`.
+            ``'inner'`` : sympy.Expr
+                The inner solution :math:`U(\xi)` in the stretched coordinate.
+            ``'inner_xi'`` : sympy.Expr
+                The inner solution back in :math:`x`,
+                :math:`U\!\big(\xi(x)\big)`.
+            ``'match'`` : sympy.Expr
+                The matching constant :math:`u_\mathrm{match}`.
+            ``'composite'`` : sympy.Expr
+                The uniform composite
+                :math:`u_\mathrm{out} + U(\xi) - u_\mathrm{match}`.
+
+        Notes
+        -----
+        Each entry is a SymPy expression (or ``Eq``), ready for ``lambdify``,
+        plotting, or further symbolic manipulation. ``'composite'`` is the same
+        object as :attr:`expansion`; ``'outer'``, ``'inner'``, ``'inner_xi'``
+        and ``'match'`` mirror the like-named attributes.
+
+        Examples
+        --------
+        >>> from asymptotics import ODE
+        >>> eq = ODE("eps*u'' + u' + u", dependent='u', small_param='eps',
+        ...          independent='x', conditions=['u(0) = 0', 'u(1) = 1'])
+        >>> sol = eq.expand_boundary_layer()
+        >>> parts = sol.components
+        >>> parts['outer']
+        exp(1 - x)
+        >>> parts['inner']            # U(xi): decays across the layer
+        E - exp(1 - xi)
+        >>> parts['match']
+        E
+        >>> sorted(parts)             # doctest: +NORMALIZE_WHITESPACE
+        ['composite', 'inner', 'inner_ode', 'inner_xi', 'layer_location',
+         'match', 'outer', 'outer_ode']
         """
         return {
             'layer_location': self.layer_location,
@@ -113,7 +242,7 @@ class BoundaryLayerHierarchy:
         }
 
     def compare_numeric(self, eps, params=None, **kwargs):
-        """
+        r"""
         Compare this expansion against a numerical solution.
 
         Parameters
@@ -124,17 +253,36 @@ class BoundaryLayerHierarchy:
             The original problem object. Defaults to the equation
             used to create this hierarchy — usually not needed.
         **kwargs
-            plot_range : [a, b]  — domain for plotting (ODE only)
-            n_points  : int     — number of plot points (default 300)
+            Extra options: ``plot_range`` (``[a, b]``, plotting domain) and
+            ``n_points`` (int, number of plot points, default 300).
 
         Returns
         -------
-        dict with keys:
-            't' or 'x'    : ndarray — evaluation points
-            'u_pert'      : ndarray — perturbation expansion
-            'u_numerical' : ndarray — numerical solution
-            'fig'         : matplotlib Figure
-            (boundary layer also returns 'u_outer', 'u_inner', 'u_expansion')
+        dict
+            Dictionary with keys ``'x'`` (evaluation points), ``'u_pert'``
+            (perturbation composite), ``'u_numerical'`` (SciPy reference),
+            ``'fig'`` (matplotlib figure), ``'errors'``, and ``'settings'``.
+            Boundary-layer problems additionally return ``'u_outer'``,
+            ``'u_inner'``, and ``'u_expansion'``.
+
+        Notes
+        -----
+        For a boundary-layer problem the reference is obtained with
+        ``scipy.integrate.solve_bvp``; the composite expansion is expected to
+        track it to :math:`\mathcal{O}(\varepsilon)`, with the largest
+        discrepancy inside the thin layer.
+
+        Examples
+        --------
+        >>> import matplotlib
+        >>> matplotlib.use('Agg')
+        >>> from asymptotics import ODE
+        >>> eq = ODE("eps*u'' + u' + u", dependent='u', small_param='eps',
+        ...          independent='x', conditions=['u(0) = 0', 'u(1) = 1'])
+        >>> sol = eq.expand_boundary_layer()
+        >>> out = sol.compare_numeric(eps=0.05)
+        >>> sorted(out)                                  # doctest: +SKIP
+        ['errors', 'fig', 'settings', 'u_numerical', 'u_pert', 'x']
         """
         from asymptotics.numerics import compare_numeric
         problem = getattr(self, '_problem', None)
@@ -203,6 +351,31 @@ class BoundaryLayerHierarchy:
         return eval_hierarchy(self, eps, at=at, params=params)
 
     def show(self, mode: str = "auto") -> None:
+        """
+        Pretty-print the full matched-asymptotics construction.
+
+        Displays the detected layer location, the outer and inner ODEs and
+        their solutions, the matching constant, and the composite expansion.
+
+        Parameters
+        ----------
+        mode : {'auto', 'text', 'latex'}, optional
+            Rendering mode. ``'auto'`` (default) renders LaTeX in a Jupyter
+            notebook and falls back to plain text in a terminal.
+
+        Returns
+        -------
+        None
+            Output is displayed as a side effect.
+
+        Examples
+        --------
+        >>> from asymptotics import ODE
+        >>> eq = ODE("eps*u'' + u' + u", dependent='u', small_param='eps',
+        ...          independent='x', conditions=['u(0) = 0', 'u(1) = 1'])
+        >>> sol = eq.expand_boundary_layer()
+        >>> sol.show(mode='text')                        # doctest: +SKIP
+        """
         from asymptotics.display.boundary_layer_display import show_boundary_layer
         show_boundary_layer(self, mode=mode)
 
@@ -246,20 +419,87 @@ def _detect_layer(p_expr, x_sym, a, b):
 # ---------------------------------------------------------------------------
 
 def expand_boundary_layer(problem, order: int = 0) -> BoundaryLayerHierarchy:
-    """
-    Apply matched asymptotic expansions to a singular perturbation BVP.
+    r"""
+    Solve a singularly perturbed BVP by matched asymptotic expansions.
+
+    Builds the leading-order boundary-layer solution of
+
+    .. math::
+
+        \varepsilon\, u''(x) + p(x)\, u'(x) + q(x)\, u(x) = f(x),
+        \qquad u(a) = \alpha, \quad u(b) = \beta ,
+
+    by detecting the layer location, solving the reduced (outer) problem away
+    from the layer, solving the stretched (inner) problem across it, matching
+    the two, and assembling the uniform composite
+
+    .. math::
+
+        u_\mathrm{comp}(x) = u_\mathrm{out}(x) + U\!\big(\xi(x)\big)
+                             - u_\mathrm{match},
+
+    where :math:`\xi = (x-a)/\varepsilon` for a left layer or
+    :math:`\xi = (b-x)/\varepsilon` for a right layer.
 
     Parameters
     ----------
     problem : ODE
-        Must be a 2nd-order BVP: eps*u'' + p(x)*u' + q(x)*u = f(x)
-        with conditions at two distinct points.
-    order : int
-        Currently only order=0 (leading order) is supported.
+        A second-order BVP of the form above, with the small parameter
+        multiplying :math:`u''` and Dirichlet conditions at two distinct
+        points.
+    order : int, optional
+        Expansion order. Only ``order=0`` (leading order) is currently
+        supported. Default ``0``.
 
     Returns
     -------
     BoundaryLayerHierarchy
+        Container holding the outer/inner ODEs and solutions, the matching
+        constant, and the composite expansion, plus the shared display and
+        evaluation API. See :attr:`BoundaryLayerHierarchy.components`.
+
+    Raises
+    ------
+    NoSmallParameterError
+        If the small parameter does not appear in the equation.
+    ValueError
+        If the ODE is not second order, is not a two-point BVP, is missing
+        Dirichlet conditions at both endpoints, or if the layer location
+        cannot be determined from the sign of :math:`p` (e.g. an interior
+        layer, which is unsupported).
+    NotImplementedError
+        If ``order > 0`` is requested.
+    RuntimeError
+        If SymPy fails to solve the outer or inner ODE.
+
+    Notes
+    -----
+    The layer is placed at the left boundary when :math:`p(a) > 0` and at the
+    right boundary when :math:`p(b) < 0`. The far boundary condition fixes the
+    outer solution; the near boundary condition fixes the inner solution.
+
+    Examples
+    --------
+    >>> from asymptotics import ODE
+    >>> eq = ODE("eps*u'' + u' + u", dependent='u', small_param='eps',
+    ...          independent='x', conditions=['u(0) = 0', 'u(1) = 1'])
+    >>> sol = eq.expand_boundary_layer()      # layer at x = 0 (p = 1 > 0)
+    >>> sol.outer
+    exp(1 - x)
+    >>> sol.match
+    E
+    >>> sol.expansion
+    (1 - exp(x*(eps - 1)/eps))*exp(1 - x)
+
+    A right-hand layer arises when the sign of :math:`p` flips:
+
+    >>> eq2 = ODE("eps*u'' - u' + u", dependent='u', small_param='eps',
+    ...           independent='x', conditions=['u(0) = 0', 'u(1) = 1'])
+    >>> sol2 = eq2.expand_boundary_layer()    # layer at x = 1 (p = -1 < 0)
+    >>> sol2.layer_location
+    'x = 1'
+    >>> sol2.outer
+    0
     """
     from asymptotics.core.exceptions import NoSmallParameterError
 

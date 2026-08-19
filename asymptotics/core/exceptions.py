@@ -1,21 +1,44 @@
 """
 asymptotics.core.exceptions
-=======================
+===========================
 Custom exceptions for clear, actionable error messages.
 """
 
 
 class PerturbationError(Exception):
-    """Base class for all asymptotics errors."""
+    """
+    Base class for all ``asymptotics`` errors.
+
+    Every domain-specific exception raised by the toolkit inherits from this
+    class, so ``except PerturbationError`` catches any expected failure of an
+    expansion (missing small parameter, unsolvable order, complex-only roots,
+    ...) while letting unrelated Python errors propagate.
+
+    Notes
+    -----
+    This base class is raised directly only in rare, otherwise-uncategorised
+    cases; ordinarily one of the more specific subclasses below is raised.
+    """
     pass
 
 
 class NoSmallParameterError(PerturbationError):
     """
-    Raised when the equation does not contain the declared small parameter.
+    The declared small parameter does not appear in the equation.
 
-    This usually means the user forgot to include eps in the equation,
-    or passed the wrong symbol as small_param.
+    Raised at the start of an expansion when the symbol passed as
+    ``small_param`` is absent from the equation — usually because the parameter
+    was forgotten in the equation string, or the wrong symbol was named as the
+    small parameter.  Without the parameter there is nothing to expand in.
+
+    Parameters
+    ----------
+    param : sympy.Symbol or str
+        The small parameter that was expected but not found.  Stored on the
+        exception as ``.param``.
+    equation : sympy.Expr
+        The (residual) equation ``f`` that was inspected.  Stored as
+        ``.equation``.
     """
     def __init__(self, param, equation):
         self.param    = param
@@ -29,11 +52,25 @@ class NoSmallParameterError(PerturbationError):
 
 
 class NoLeadingOrderSolutionError(PerturbationError):
-    """
-    Raised when SymPy cannot solve the O(1) equation symbolically.
+    r"""
+    The leading-order :math:`\mathcal{O}(1)` equation has no closed-form root.
 
-    This happens with transcendental equations like x = cos(x) where
-    the unperturbed root cannot be expressed in closed form.
+    Raised when SymPy cannot solve the unperturbed (``eps = 0``) equation
+    symbolically.  This is typical of transcendental problems such as
+    ``x - cos(x) = eps``, whose leading-order root cannot be written in closed
+    form.  The remedy is to supply a numerical ``root_hint``, rearrange the
+    equation so the leading-order part is solvable, or check that the small
+    parameter and unknown were identified correctly.
+
+    Parameters
+    ----------
+    equation : sympy.Expr
+        The leading-order equation (set to zero) that could not be solved.
+        Stored on the exception as ``.equation``.
+    param : sympy.Symbol or str
+        The small parameter, used only to build the guidance message.
+    variable : sympy.Symbol or str
+        The unknown being solved for, used only in the guidance message.
     """
     def __init__(self, equation, param, variable):
         self.equation = equation
@@ -51,12 +88,29 @@ class NoLeadingOrderSolutionError(PerturbationError):
 
 
 class NoHigherOrderSolutionError(PerturbationError):
-    """
-    Raised when SymPy cannot solve the equation at order k.
+    r"""
+    The order-:math:`k` equation (:math:`k \ge 1`) could not be solved.
 
-    This can happen if the higher-order equation is nonlinear in x_k
-    (which would indicate a singular perturbation problem or a
-    breakdown of the regular expansion).
+    Raised while marching up the hierarchy when SymPy cannot solve the equation
+    at some order :math:`k` for its unknown term.  In a well-posed regular
+    expansion each order is *linear* in its highest unknown; failure here
+    usually signals that the equation is nonlinear in that unknown, that the
+    problem is actually singular (needs Lindstedt, multiple scales, or matched
+    asymptotics instead of regular perturbation), or that the wrong
+    leading-order branch was chosen.
+
+    Parameters
+    ----------
+    order : int
+        The order :math:`k` at which solving failed.  Stored as ``.order``.
+    symbol : sympy.Symbol or list of sympy.Symbol
+        The order-:math:`k` unknown(s) being solved for (e.g. :math:`x_k`).
+    equation : sympy.Expr
+        The order-:math:`k` equation (set to zero) that could not be solved.
+        Stored as ``.equation``.
+    known : dict
+        The already-determined lower-order solutions available at this point,
+        included in the message to aid debugging.
     """
     def __init__(self, order, symbol, equation, known):
         self.order    = order
@@ -76,9 +130,21 @@ class NoHigherOrderSolutionError(PerturbationError):
 
 
 class OnlyComplexRootsError(PerturbationError):
-    """
-    Raised when the O(1) equation has only complex roots and no root_hint
-    is provided to select one.
+    r"""
+    The leading-order equation has only complex roots and none was selected.
+
+    Raised when the unperturbed :math:`\mathcal{O}(1)` equation is solvable but
+    every root is complex (e.g. ``x**2 + 1 + eps*x`` gives ``x0 = ±i``), so
+    there is no real branch to expand about.  To follow a particular complex
+    branch, pass a ``root_hint`` near the desired root.
+
+    Parameters
+    ----------
+    equation : sympy.Expr
+        The leading-order equation (set to zero) whose roots are all complex.
+    roots : list of sympy.Expr
+        The complex roots that were found.  Stored on the exception as
+        ``.roots`` (and shown in the message).
     """
     def __init__(self, equation, roots):
         self.roots = roots

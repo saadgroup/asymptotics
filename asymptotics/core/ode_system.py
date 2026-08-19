@@ -1,21 +1,25 @@
 """
 asymptotics.core.ode_system
-========================
+===========================
 ODESystem — a coupled system of ODEs for perturbation expansion.
 
 All inputs are plain strings — no symbols() needed.
 
 Example
 -------
->>> sys = ODESystem(
-...     equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
-...     small_param = "eps",
-...     conditions  = ["u(0) = 1", "v(0) = 1"],
-... )
+>>> from asymptotics import ODESystem
+>>> import io, contextlib
+>>> with contextlib.redirect_stdout(io.StringIO()):  # hide inferred-var banner
+...     sys = ODESystem(
+...         equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
+...         small_param = "eps",
+...         conditions  = ["u(0) = 1", "v(0) = 1"],
+...     )
 >>> sol = sys.expand_regular(order=2)
->>> sol["u"].expansion
+>>> sol["u"][0].particular_solution
+exp(-t)
 >>> sol["v"][1].particular_solution
->>> sol.show()
+-t*exp(-2*t)
 """
 
 from __future__ import annotations
@@ -170,45 +174,101 @@ def _infer_independent_system(equations: list, dependents: list,
 # ---------------------------------------------------------------------------
 
 class ODESystem:
-    """
-    A coupled system of ODEs for perturbation expansion.
+    r"""
+    A coupled system of ODEs prepared for regular perturbation expansion.
 
-    All inputs are plain strings — no symbols() needed.
-    Use prime notation for derivatives: u' for du/dt, u'' for d²u/dt².
+    An :class:`ODESystem` holds :math:`N` coupled ordinary differential
+    equations in the dependent variables :math:`u^{(1)}, \dots, u^{(N)}`,
+    each written implicitly as :math:`F_i = 0`, together with a designated
+    small parameter :math:`\varepsilon` and one initial/boundary condition
+    per order of each variable's equation.  All inputs are plain strings —
+    no :func:`sympy.symbols` calls are needed.  Use prime notation for
+    derivatives: ``u'`` for :math:`du/dt`, ``u''`` for :math:`d^2u/dt^2`
+    (up to sixth order).
+
+    Regular perturbation seeks each unknown as a power series in
+    :math:`\varepsilon`,
+
+    .. math::
+
+        u^{(i)}(t, \varepsilon) = \sum_{k=0}^{\infty}
+            \varepsilon^{k}\, u^{(i)}_k(t),
+
+    which, substituted into every :math:`F_i = 0` and collected power by
+    power of :math:`\varepsilon`, yields a triangular family of ODEs solved
+    order by order (see :meth:`expand_regular`).  The construction only
+    validates and parses the problem; the expansion is performed lazily by
+    :meth:`expand_regular`.
 
     Parameters
     ----------
     equations : list of str
-        Each equation set equal to zero, e.g.:
-          ["u' + u + eps*v", "v' + 2*v + eps*u**2"]
+        Each equation is understood as set equal to zero, e.g.
+        ``["u' + u + eps*v", "v' + 2*v + eps*u**2"]``.  There must be
+        exactly one equation per dependent variable, and each equation must
+        contain at least one derivative of its owner variable.
     small_param : str
-        Name of the small parameter, e.g. "eps".
+        Name of the small parameter, e.g. ``"eps"``.  It must appear in at
+        least one equation.
     conditions : list of str
-        Initial or boundary conditions for ALL variables, e.g.:
-          ["u(0) = 1", "v(0) = 0"]
-        One condition per variable per order of that variable's ODE.
+        Initial or boundary conditions for ALL variables, e.g.
+        ``["u(0) = 1", "v(0) = 0"]``.  Exactly one condition is required per
+        order of each variable's ODE (a first-order equation needs one
+        condition, a second-order equation two, and so on).
     dependents : list of str, optional
-        Names of the dependent variables, e.g. ["u", "v"].
-        If omitted, inferred from the leading identifiers in *conditions*
-        (e.g. ``"u(0) = 1"`` → ``"u"``).
+        Names of the dependent variables, e.g. ``["u", "v"]``.  If omitted,
+        they are inferred from the leading identifiers in *conditions*
+        (e.g. ``"u(0) = 1"`` → ``"u"``) and each equation is matched to the
+        variable whose derivative it contains; an informational message
+        reporting the inferred names is printed.
     independent : str, optional
-        Name of the independent variable, e.g. "t".
-        If omitted, inferred by scanning the equations for tokens in
-        {r, x, y, z, t}; falls back to 't' when ambiguous or absent.
+        Name of the independent variable, e.g. ``"t"``.  If omitted, it is
+        inferred by scanning the equations for tokens in
+        :math:`\{r, x, y, z, t\}`, falling back to ``'t'`` when ambiguous
+        or absent.
+
+    Raises
+    ------
+    ValueError
+        If the number of equations does not match the number of dependent
+        variables, if a variable has no derivative in its equation, if the
+        dependent/independent variables cannot be inferred unambiguously, or
+        if an equation fails to parse.
+    ConditionError
+        If a variable does not have exactly as many conditions as the order
+        of its ODE, or a condition cannot be matched to a variable.
+
+    See Also
+    --------
+    expand_regular : Solve the system order by order.
+    asymptotics.ODE : Single-equation counterpart.
+
+    Notes
+    -----
+    This solver targets *weakly* coupled systems in which the leading-order
+    (:math:`\varepsilon^0`) operator is diagonal — i.e. inter-variable
+    coupling enters only at :math:`O(\varepsilon)` or higher, as with the
+    ``eps*v`` and ``eps*u**2`` terms below.  Systems whose equations remain
+    coupled at :math:`O(1)` are rejected by :meth:`expand_regular`; see its
+    ``Raises`` section.
 
     Examples
     --------
     >>> from asymptotics import ODESystem
-    >>> # both dependents and independent inferred automatically
-    >>> sys = ODESystem(
-    ...     equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
-    ...     small_param = "eps",
-    ...     conditions  = ["u(0) = 1", "v(0) = 1"],
-    ... )
+    >>> import io, contextlib
+    >>> # dependents and independent are inferred automatically; the
+    >>> # constructor prints an informational banner (hidden here).
+    >>> with contextlib.redirect_stdout(io.StringIO()):
+    ...     sys = ODESystem(
+    ...         equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
+    ...         small_param = "eps",
+    ...         conditions  = ["u(0) = 1", "v(0) = 1"],
+    ...     )
     >>> sol = sys.expand_regular(order=2)
-    >>> sol.show()
-    >>> sol["u"].expansion
+    >>> sol["u"][0].particular_solution
+    exp(-t)
     >>> sol["v"][1].particular_solution
+    -t*exp(-2*t)
     """
 
     def __init__(
@@ -323,17 +383,64 @@ class ODESystem:
                 ) from e
 
     def expand_regular(self, order: int = 2):
-        """
+        r"""
         Apply regular perturbation theory to this coupled ODE system.
+
+        Substitutes the power-series ansatz
+        :math:`u^{(i)} = \sum_k \varepsilon^k u^{(i)}_k(t)` into every
+        equation, collects like powers of :math:`\varepsilon`, and solves the
+        resulting hierarchy order by order.  Because the leading-order
+        operator is diagonal, the order-:math:`k` equations decouple into
+        :math:`N` independent scalar ODEs
+
+        .. math::
+
+            \mathcal{L}_i\, u^{(i)}_k(t)
+                = g^{(i)}_k\!\bigl(u^{(j)}_0, \dots, u^{(j)}_{k-1}\bigr),
+
+        each forced only by already-known lower-order solutions.  The
+        leading order (:math:`k=0`) uses the supplied initial/boundary
+        conditions; every higher order is solved with homogeneous
+        conditions so that the conditions are met exactly at :math:`O(1)`.
 
         Parameters
         ----------
         order : int
-            Highest power of ε to compute. Default 2.
+            Highest power of :math:`\varepsilon` to compute. Default 2.
+            Must be a non-negative integer.
 
         Returns
         -------
         ODESystemHierarchy
+            The solved hierarchy, indexable by variable name
+            (``sol["u"]``) and by order (``sol[k]``).
+
+        Raises
+        ------
+        TypeError
+            If *order* is not a non-negative integer.
+        NoSmallParameterError
+            If :math:`\varepsilon` appears in none of the equations.
+        RuntimeError
+            If, after substituting all known lower-order solutions, an
+            order-:math:`k` equation still references another variable's
+            unknown — i.e. the system is coupled at :math:`O(1)` and does
+            not decouple as this solver requires.
+
+        Examples
+        --------
+        >>> from asymptotics import ODESystem
+        >>> import io, contextlib
+        >>> with contextlib.redirect_stdout(io.StringIO()):  # hide inferred-var banner
+        ...     sys = ODESystem(
+        ...         equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
+        ...         dependents  = ["u", "v"], independent = "t",
+        ...         small_param = "eps",
+        ...         conditions  = ["u(0) = 1", "v(0) = 1"],
+        ...     )
+        >>> sol = sys.expand_regular(order=2)
+        >>> len(sol)                                # orders 0, 1, 2
+        3
         """
         if not isinstance(order, int) or order < 0:
             raise TypeError(

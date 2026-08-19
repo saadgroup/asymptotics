@@ -1,6 +1,6 @@
 """
 asymptotics.methods.regular_ode_system
-====================================
+======================================
 Regular perturbation expansion for coupled ODE systems.
 
 Algorithm
@@ -28,7 +28,57 @@ from asymptotics.core.exceptions import NoSmallParameterError
 # ---------------------------------------------------------------------------
 
 class ODESystemOrderEntry:
-    """One order of the expansion for a single variable."""
+    r"""
+    One order of the perturbation expansion for a single variable.
+
+    Holds the order-:math:`k` ODE and its solution for one dependent
+    variable of a coupled system.  Instances are produced by
+    :func:`expand_regular_ode_system` and reached via
+    ``sol["u"][k]`` (per-variable, per-order access); the same objects back
+    the dicts returned by the order-view properties of
+    :class:`_SystemOrderView`.
+
+    Attributes
+    ----------
+    order : int
+        The order :math:`k` (power of :math:`\varepsilon`) this entry
+        represents.
+    ode : sympy.Eq
+        The order-:math:`k` ODE :math:`\mathcal{L}\,u_k = g_k = 0`, after
+        substitution of all known lower-order solutions.
+    equation : sympy.Eq
+        Alias of :attr:`ode`, provided for a uniform per-order API shared
+        with the scalar hierarchies.
+    general_solution : sympy.Expr
+        The general solution of :attr:`ode`, carrying free integration
+        constants :math:`C_1, C_2, \dots`.
+    particular_solution : sympy.Expr
+        The solution with integration constants fixed by the conditions
+        (the original conditions at :math:`k=0`, homogeneous conditions for
+        :math:`k>0`).
+    solution : sympy.Expr
+        Alias of :attr:`particular_solution`.
+    symbol : sympy.Function
+        The undetermined function :math:`u_k(t)` this entry solves for.
+
+    Examples
+    --------
+    >>> from asymptotics import ODESystem
+    >>> import io, contextlib
+    >>> with contextlib.redirect_stdout(io.StringIO()):  # hide inferred-var banner
+    ...     sys = ODESystem(
+    ...         equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
+    ...         dependents  = ["u", "v"], independent = "t",
+    ...         small_param = "eps", conditions = ["u(0) = 1", "v(0) = 1"])
+    >>> sol = sys.expand_regular(order=2)
+    >>> entry = sol["v"][1]
+    >>> entry.order
+    1
+    >>> entry.particular_solution
+    -t*exp(-2*t)
+    >>> entry.solution is entry.particular_solution
+    True
+    """
 
     def __init__(self, order, ode, general_solution, particular_solution, symbol):
         self.order               = order
@@ -41,9 +91,43 @@ class ODESystemOrderEntry:
 
 
 class ODESystemVarHierarchy:
-    """
+    r"""
     Perturbation hierarchy for ONE variable in a coupled system.
-    Mimics ODEHierarchy so the same display/access patterns work.
+
+    Collects the :class:`ODESystemOrderEntry` objects for a single
+    dependent variable and the assembled truncated series
+    :math:`u(t,\varepsilon) = \sum_k \varepsilon^k u_k(t)`.  Mimics the
+    scalar ``ODEHierarchy`` interface so the same display and access
+    patterns work.  Obtained by indexing an :class:`ODESystemHierarchy`
+    with a variable name: ``sol["u"]``.
+
+    Attributes
+    ----------
+    name : str
+        The dependent-variable name, e.g. ``"u"``.
+    entries : list of ODESystemOrderEntry
+        One entry per order, ``entries[k]`` being order :math:`k`.
+    expansion : sympy.Expr
+        The assembled truncated series in :math:`\varepsilon` for this
+        variable (set once the solve completes).
+
+    Examples
+    --------
+    >>> from asymptotics import ODESystem
+    >>> import io, contextlib
+    >>> with contextlib.redirect_stdout(io.StringIO()):  # hide inferred-var banner
+    ...     sys = ODESystem(
+    ...         equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
+    ...         dependents  = ["u", "v"], independent = "t",
+    ...         small_param = "eps", conditions = ["u(0) = 1", "v(0) = 1"])
+    >>> sol = sys.expand_regular(order=2)
+    >>> uh = sol["u"]
+    >>> len(uh)                                 # orders 0, 1, 2
+    3
+    >>> uh[0].particular_solution               # same as uh.__getitem__(0)
+    exp(-t)
+    >>> uh.expansion
+    eps**2*(-t*exp(-2*t) + exp(-t) - exp(-2*t)) + eps*(-exp(-t) + exp(-2*t)) + exp(-t)
     """
 
     def __init__(self, name):
@@ -52,6 +136,21 @@ class ODESystemVarHierarchy:
         self.expansion = None
 
     def __getitem__(self, order: int):
+        r"""
+        Return the :class:`ODESystemOrderEntry` for a given order.
+
+        Parameters
+        ----------
+        order : int
+            The order :math:`k`; standard list indexing (negatives count
+            from the end).
+
+        Returns
+        -------
+        ODESystemOrderEntry
+            The entry for order :math:`k`, exposing ``.equation``,
+            ``.general_solution``, ``.particular_solution``, etc.
+        """
         return self.entries[order]
 
     def __len__(self):
@@ -63,17 +162,59 @@ class ODESystemVarHierarchy:
 # ---------------------------------------------------------------------------
 
 class _SystemOrderView:
-    """Order-k view across every variable of a coupled system.
+    r"""Order-:math:`k` view across every variable of a coupled system.
 
-    Returned by ``sol[k]`` on an :class:`ODESystemHierarchy`, giving the same
-    ``.equation`` / ``.solution`` interface as a scalar order entry, except that
-    each member is a dict keyed by variable name::
+    Returned by ``sol[k]`` (integer key) on an :class:`ODESystemHierarchy`,
+    giving the same ``.equation`` / ``.solution`` interface as a scalar
+    order entry, except that each member is a **dict keyed by variable
+    name**.  This is the transpose of per-variable access: ``sol[k]`` fixes
+    the order and ranges over variables, whereas ``sol["u"][k]`` fixes the
+    variable and picks the order.
+
+    For an order-:math:`k` view :math:`\text{sol}[k]`,
+
+    .. math::
+
+        \text{sol}[k].\texttt{equation} =
+            \bigl\{\, i : \mathcal{L}_i\,u^{(i)}_k = g^{(i)}_k = 0 \,\bigr\},
+        \qquad
+        \text{sol}[k].\texttt{solution} =
+            \bigl\{\, i : u^{(i)}_k(t) \,\bigr\},
+
+    with one key per dependent variable :math:`i`::
 
         sol[k].equation             # {'u': Eq(...), 'v': Eq(...)}
         sol[k].solution             # {'u': expr,    'v': expr}
         sol[k].particular_solution  # likewise
 
-    (Per-variable access ``sol["u"][k]`` remains available.)
+    (Per-variable access ``sol["u"][k]`` remains available and returns the
+    single :class:`ODESystemOrderEntry` for that variable and order.)
+
+    Parameters
+    ----------
+    hierarchy : ODESystemHierarchy
+        The parent hierarchy this view reads from.
+    order : int
+        The fixed order :math:`k`.
+
+    Examples
+    --------
+    >>> from asymptotics import ODESystem
+    >>> import io, contextlib
+    >>> with contextlib.redirect_stdout(io.StringIO()):  # hide inferred-var banner
+    ...     sys = ODESystem(
+    ...         equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
+    ...         dependents  = ["u", "v"], independent = "t",
+    ...         small_param = "eps", conditions = ["u(0) = 1", "v(0) = 1"])
+    >>> sol = sys.expand_regular(order=2)
+    >>> view = sol[1]                           # order-1 view over all vars
+    >>> sorted(view.solution)                   # dict keyed by variable
+    ['u', 'v']
+    >>> view.solution["v"]
+    -t*exp(-2*t)
+    >>> # equivalent single-variable access:
+    >>> sol["v"][1].particular_solution
+    -t*exp(-2*t)
     """
 
     def __init__(self, hierarchy, order):
@@ -85,15 +226,31 @@ class _SystemOrderView:
                 for v in self._h.variables}
 
     @property
-    def equation(self):            return self._collect('equation')
+    def equation(self):
+        r"""dict — order-:math:`k` ODE :math:`\mathcal{L}_i u^{(i)}_k = 0`
+        (a :class:`sympy.Eq`) for each variable, keyed by variable name."""
+        return self._collect('equation')
     @property
-    def ode(self):                 return self._collect('ode')
+    def ode(self):
+        r"""dict — same as :attr:`equation`; the order-:math:`k` ODE keyed
+        by variable name."""
+        return self._collect('ode')
     @property
-    def solution(self):            return self._collect('solution')
+    def solution(self):
+        r"""dict — order-:math:`k` particular solution
+        :math:`u^{(i)}_k(t)` for each variable, keyed by variable name
+        (alias of :attr:`particular_solution`)."""
+        return self._collect('solution')
     @property
-    def general_solution(self):    return self._collect('general_solution')
+    def general_solution(self):
+        r"""dict — order-:math:`k` general solution (with free integration
+        constants) for each variable, keyed by variable name."""
+        return self._collect('general_solution')
     @property
-    def particular_solution(self): return self._collect('particular_solution')
+    def particular_solution(self):
+        r"""dict — order-:math:`k` solution with constants fixed by the
+        conditions, for each variable, keyed by variable name."""
+        return self._collect('particular_solution')
 
     def __repr__(self):
         return (f"<order-{self.order} view over variables "
@@ -101,21 +258,61 @@ class _SystemOrderView:
 
 
 class ODESystemHierarchy:
-    """
+    r"""
     Result of a regular perturbation expansion for a coupled ODE system.
 
-    Access per-variable results via:
-        sol["u"].expansion
-        sol["u"][k].particular_solution
-        sol["v"].expansion
+    Returned by :meth:`asymptotics.ODESystem.expand_regular` (via
+    :func:`expand_regular_ode_system`).  Supports **dual indexing** through
+    :meth:`__getitem__`:
+
+    * a **string** key selects one variable's sub-hierarchy —
+      ``sol["u"]`` is an :class:`ODESystemVarHierarchy`, so
+      ``sol["u"][k]`` is the order-:math:`k` entry for ``u``;
+    * an **integer** key selects an order across all variables —
+      ``sol[k]`` is a :class:`_SystemOrderView` whose ``.equation`` /
+      ``.solution`` / ``.particular_solution`` return dicts keyed by
+      variable name.
+
+    Thus ``sol["u"][k].particular_solution`` and
+    ``sol[k].particular_solution["u"]`` refer to the same expression
+    :math:`u_k(t)`.
 
     Attributes
     ----------
-    variables    : list of str
-    hierarchies  : dict — {var_name: ODESystemVarHierarchy}
-    small_param  : Symbol
-    independent  : Symbol
-    _method      : str
+    variables : list of str
+        The dependent-variable names, in order.
+    hierarchies : dict
+        Mapping ``{var_name: ODESystemVarHierarchy}``.
+    small_param : sympy.Symbol
+        The small parameter :math:`\varepsilon`.
+    independent : sympy.Symbol
+        The independent variable, e.g. :math:`t`.
+    _method : str
+        Human-readable label for the expansion method.
+
+    See Also
+    --------
+    ODESystemVarHierarchy : Per-variable sub-hierarchy (``sol["u"]``).
+    _SystemOrderView : Per-order cross-variable view (``sol[k]``).
+
+    Examples
+    --------
+    >>> from asymptotics import ODESystem
+    >>> import io, contextlib
+    >>> with contextlib.redirect_stdout(io.StringIO()):  # hide inferred-var banner
+    ...     sys = ODESystem(
+    ...         equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
+    ...         dependents  = ["u", "v"], independent = "t",
+    ...         small_param = "eps", conditions = ["u(0) = 1", "v(0) = 1"])
+    >>> sol = sys.expand_regular(order=2)
+    >>> sol.variables
+    ['u', 'v']
+    >>> len(sol)                                # number of orders
+    3
+    >>> sol["u"][0].particular_solution         # string key -> variable
+    exp(-t)
+    >>> sol[1].solution["v"]                    # int key -> order (dict)
+    -t*exp(-2*t)
     """
 
     def __init__(self):
@@ -131,6 +328,47 @@ class ODESystemHierarchy:
         return len(first) if first is not None else 0
 
     def __getitem__(self, key):
+        r"""
+        Dual-purpose indexing over variables and orders.
+
+        Parameters
+        ----------
+        key : str or int
+            * ``str`` — a variable name; returns that variable's
+              :class:`ODESystemVarHierarchy` (e.g. ``sol["u"]``), which is
+              itself indexable by order (``sol["u"][k]``).
+            * ``int`` — an order :math:`k`; returns a
+              :class:`_SystemOrderView` whose ``.equation`` / ``.solution``
+              / ``.particular_solution`` are dicts keyed by variable name
+              (e.g. ``sol[k].solution["u"]``).  The key is coerced with
+              ``int(key)``.
+
+        Returns
+        -------
+        ODESystemVarHierarchy or _SystemOrderView
+            An :class:`ODESystemVarHierarchy` for a string key, or a
+            :class:`_SystemOrderView` for an integer key.
+
+        Raises
+        ------
+        KeyError
+            If a string *key* is not one of :attr:`variables`.
+
+        Examples
+        --------
+        >>> from asymptotics import ODESystem
+        >>> import io, contextlib
+        >>> with contextlib.redirect_stdout(io.StringIO()):  # hide inferred-var banner
+        ...     sys = ODESystem(
+        ...         equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
+        ...         dependents  = ["u", "v"], independent = "t",
+        ...         small_param = "eps", conditions = ["u(0) = 1", "v(0) = 1"])
+        >>> sol = sys.expand_regular(order=2)
+        >>> sol["u"][1].particular_solution         # variable, then order
+        -exp(-t) + exp(-2*t)
+        >>> sol[1].particular_solution["u"]         # order, then variable
+        -exp(-t) + exp(-2*t)
+        """
         # String key -> per-variable hierarchy:  sol["u"][k]
         # Integer key -> order-k view across all variables:  sol[k].solution -> {var: expr}
         if isinstance(key, str):
@@ -144,27 +382,42 @@ class ODESystemHierarchy:
 
 
     def to_latex(self, environment='align', show_orders=False, filename=None):
-        """
+        r"""
         Export this expansion as LaTeX source.
+
+        Emits one aligned equation per dependent variable, with the small
+        parameter rendered as ``\varepsilon``.
 
         Parameters
         ----------
         environment : str
-            LaTeX math environment: 'align' (default), 'equation', or 'gather'.
+            LaTeX math environment: ``'align'`` (default), ``'equation'``,
+            or ``'gather'``.
         show_orders : bool
-            If True, include each order u_k separately. Default False.
+            If True, include each order :math:`u_k` separately.
+            Default False.
         filename : str, optional
-            If given, write to this file. Otherwise print to console.
+            If given, write the source to this file; otherwise return it.
 
         Returns
         -------
-        str — the LaTeX source string
+        str
+            The LaTeX source string.
 
         Examples
         --------
-        >>> print(sol.to_latex())
-        >>> sol.to_latex(filename="result.tex")
-        >>> sol.to_latex(environment='equation', show_orders=True)
+        >>> from asymptotics import ODESystem
+        >>> import io, contextlib
+        >>> with contextlib.redirect_stdout(io.StringIO()):  # hide inferred-var banner
+        ...     sys = ODESystem(
+        ...         equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
+        ...         dependents  = ["u", "v"], independent = "t",
+        ...         small_param = "eps", conditions = ["u(0) = 1", "v(0) = 1"])
+        >>> sol = sys.expand_regular(order=1)
+        >>> with contextlib.redirect_stdout(io.StringIO()):   # to_latex also prints
+        ...     src = sol.to_latex()
+        >>> "varepsilon" in src
+        True
         """
         from asymptotics.latex_export import to_latex
         return to_latex(self, environment=environment,
@@ -172,56 +425,134 @@ class ODESystemHierarchy:
 
 
     def eval(self, eps, at=None, params=None):
-        """
-        Evaluate the perturbation expansion at given eps and independent variable values.
+        r"""
+        Numerically evaluate the truncated expansion of every variable.
+
+        Substitutes a value of :math:`\varepsilon` into each variable's
+        assembled series and evaluates it on a grid of the independent
+        variable.  Because a system has several dependent variables, the
+        result is keyed by variable name.
 
         Parameters
         ----------
         eps : float or list of float
-            Value(s) of the small parameter.
-        at : array-like, optional
-            Values of the independent variable (for ODEs).
-            Not needed for algebraic equations.
+            Value(s) of the small parameter :math:`\varepsilon`.
+        at : array-like
+            Grid of independent-variable values on which to sample each
+            solution.
+        params : dict, optional
+            Values for any extra symbolic parameters in the expansion.
 
         Returns
         -------
-        For ODEs:
-            ndarray if eps is scalar, dict {eps: ndarray} if eps is a list
-        For algebraic:
-            float if eps is scalar, ndarray if eps is a list
+        dict
+            If *eps* is scalar, a dict ``{var_name: ndarray}`` giving each
+            variable's samples on *at*.  If *eps* is a list, a nested dict
+            ``{eps_value: {var_name: ndarray}}``.
 
         Examples
         --------
-        >>> # ODE
-        >>> t_vals = np.linspace(0, 20, 300)
-        >>> u = sol.eval(eps=0.1, at=t_vals)           # ndarray
-        >>> u = sol.eval(eps=[0.1, 0.2], at=t_vals)    # dict {0.1: array, 0.2: array}
-        >>>
-        >>> # Algebraic
-        >>> x = sol.eval(eps=0.1)                       # float
-        >>> x = sol.eval(eps=[0.1, 0.2, 0.3])           # ndarray
+        >>> import numpy as np
+        >>> from asymptotics import ODESystem
+        >>> import io, contextlib
+        >>> with contextlib.redirect_stdout(io.StringIO()):  # hide inferred-var banner
+        ...     sys = ODESystem(
+        ...         equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
+        ...         dependents  = ["u", "v"], independent = "t",
+        ...         small_param = "eps", conditions = ["u(0) = 1", "v(0) = 1"])
+        >>> sol = sys.expand_regular(order=2)
+        >>> out = sol.eval(eps=0.1, at=np.array([0.0, 1.0]))
+        >>> sorted(out)
+        ['u', 'v']
+        >>> float(out["u"][0])                      # u(0, eps=0.1) = 1
+        1.0
+        >>> multi = sol.eval(eps=[0.1, 0.2], at=np.array([0.0, 1.0]))
+        >>> sorted(multi)                           # keyed by eps, then var
+        [0.1, 0.2]
         """
         from asymptotics.eval import eval_hierarchy
         return eval_hierarchy(self, eps, at=at, params=params)
 
     def show(self, mode: str = "auto") -> None:
+        r"""
+        Pretty-print the expansion, one block per variable.
+
+        Renders rich LaTeX (:class:`IPython.display.Math`) in a Jupyter
+        notebook and falls back to plain text in a terminal.  For each
+        dependent variable it shows the order-by-order ODEs and solutions
+        and the assembled truncated series in :math:`\varepsilon`.
+
+        Parameters
+        ----------
+        mode : {'auto', 'latex', 'text'}, optional
+            ``'auto'`` (default) picks LaTeX in Jupyter and text otherwise;
+            ``'latex'`` and ``'text'`` force the respective renderer.
+
+        Returns
+        -------
+        None
+            Output is displayed/printed as a side effect.
+
+        Examples
+        --------
+        >>> from asymptotics import ODESystem
+        >>> import io, contextlib
+        >>> with contextlib.redirect_stdout(io.StringIO()):  # hide inferred-var banner
+        ...     sys = ODESystem(
+        ...         equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
+        ...         dependents  = ["u", "v"], independent = "t",
+        ...         small_param = "eps", conditions = ["u(0) = 1", "v(0) = 1"])
+        >>> sol = sys.expand_regular(order=1)
+        >>> sol.show(mode="text")                   # doctest: +SKIP
+        """
         from asymptotics.display.ode_system_display import show_ode_system
         show_ode_system(self, mode=mode)
 
     def compare_numeric(self, eps, params=None, **kwargs):
-        """
-        Compare this expansion against a numerical solution.
+        r"""
+        Compare this expansion against a direct numerical solution.
+
+        Integrates the original coupled system numerically (via
+        :func:`scipy.integrate.solve_ivp`) at the given :math:`\varepsilon`
+        and compares it against the perturbation series, returning error
+        norms and a comparison figure.  The original :class:`ODESystem` is
+        recovered automatically from the stored ``_problem`` reference.
 
         Parameters
         ----------
         eps : float
-        problem : ODESystem — the original problem object (optional, inferred automatically)
-        plot_range : [a, b]
-        n_points : int
+            Value of the small parameter for the comparison.
+        params : dict, optional
+            Values for any extra symbolic parameters.
+        plot_range : list of float, optional
+            ``[a, b]`` interval of the independent variable to plot over.
+        n_points : int, optional
+            Number of sample points.
 
         Returns
         -------
-        dict with 't', 'u_pert', 'u_numerical', 'fig'
+        dict
+            Contains ``'t'`` (grid), ``'u_pert'`` and ``'u_numerical'``
+            (per-variable samples), ``'fig'`` (the Matplotlib figure),
+            ``'errors'`` (L2/Linf absolute and relative errors keyed by the
+            :math:`\varepsilon` value, per variable), and ``'settings'``
+            (the SciPy solver configuration used).
+
+        Examples
+        --------
+        >>> import matplotlib
+        >>> matplotlib.use("Agg")
+        >>> from asymptotics import ODESystem
+        >>> import io, contextlib
+        >>> with contextlib.redirect_stdout(io.StringIO()):  # hide inferred-var banner
+        ...     sys = ODESystem(
+        ...         equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
+        ...         dependents  = ["u", "v"], independent = "t",
+        ...         small_param = "eps", conditions = ["u(0) = 1", "v(0) = 1"])
+        >>> sol = sys.expand_regular(order=2)
+        >>> result = sol.compare_numeric(eps=0.1)
+        >>> sorted(result)
+        ['errors', 'fig', 'settings', 't', 'u_numerical', 'u_pert']
         """
         from asymptotics.numerics import compare_numeric
         problem = getattr(self, '_problem', None)
@@ -233,17 +564,86 @@ class ODESystemHierarchy:
 # ---------------------------------------------------------------------------
 
 def expand_regular_ode_system(problem, order: int = 2) -> ODESystemHierarchy:
-    """
+    r"""
     Apply regular perturbation to a coupled ODE system.
+
+    This is the engine behind :meth:`asymptotics.ODESystem.expand_regular`.
+    Given a problem with ansatz
+    :math:`u^{(i)} = \sum_{k} \varepsilon^k u^{(i)}_k(t)`, it substitutes
+    the series into every equation, expands in :math:`\varepsilon` to the
+    requested order, and solves the resulting hierarchy order by order.
+
+    At each order :math:`k` the known lower-order solutions are substituted
+    into the collected coefficient, leaving — for a weakly coupled system —
+    a scalar ODE for :math:`u^{(i)}_k` alone:
+
+    .. math::
+
+        \mathcal{L}_i\, u^{(i)}_k(t)
+            = g^{(i)}_k\!\bigl(u^{(j)}_{<k}\bigr).
+
+    The leading order applies the original conditions; higher orders use
+    homogeneous conditions.  Before calling :func:`sympy.dsolve`, a
+    **decoupling guard** checks that the order-:math:`k` equation for
+    variable :math:`i` no longer contains any *other* variable's unknown
+    :math:`u^{(j)}_m`; if it does, the system is coupled at :math:`O(1)`
+    and a :class:`RuntimeError` is raised rather than returning an
+    unresolved or incorrect result.
 
     Parameters
     ----------
     problem : ODESystem
-    order : int
+        The parsed coupled-system problem.
+    order : int, optional
+        Highest power of :math:`\varepsilon` to compute. Default 2.
 
     Returns
     -------
     ODESystemHierarchy
+        The solved hierarchy; each per-variable ``expansion`` and the
+        ``_problem`` back-reference are populated.
+
+    Raises
+    ------
+    NoSmallParameterError
+        If :math:`\varepsilon` appears in none of the equations.
+    RuntimeError
+        If the decoupling guard finds an order-:math:`k` equation still
+        coupled to another variable's unknown, or if :func:`sympy.dsolve`
+        fails to solve an order-:math:`k` ODE.
+
+    See Also
+    --------
+    asymptotics.ODESystem.expand_regular : Public method wrapper.
+
+    Examples
+    --------
+    >>> from asymptotics import ODESystem
+    >>> from asymptotics.methods.regular_ode_system import (
+    ...     expand_regular_ode_system, ODESystemHierarchy)
+    >>> import io, contextlib
+    >>> with contextlib.redirect_stdout(io.StringIO()):  # hide inferred-var banner
+    ...     sys = ODESystem(
+    ...         equations   = ["u' + u + eps*v", "v' + 2*v + eps*u**2"],
+    ...         dependents  = ["u", "v"], independent = "t",
+    ...         small_param = "eps", conditions = ["u(0) = 1", "v(0) = 1"])
+    >>> sol = expand_regular_ode_system(sys, order=2)
+    >>> isinstance(sol, ODESystemHierarchy)
+    True
+    >>> sol["v"][1].particular_solution
+    -t*exp(-2*t)
+
+    A system coupled at leading order is rejected:
+
+    >>> with contextlib.redirect_stdout(io.StringIO()):  # v enters u's eq at O(1)
+    ...     bad = ODESystem(
+    ...         equations   = ["u' + u + v", "v' + 2*v + eps*u**2"],
+    ...         dependents  = ["u", "v"], independent = "t",
+    ...         small_param = "eps", conditions = ["u(0) = 1", "v(0) = 1"])
+    >>> expand_regular_ode_system(bad, order=2)  # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+        ...
+    RuntimeError: ...
     """
     eps  = problem.small_param
     t    = problem.independent

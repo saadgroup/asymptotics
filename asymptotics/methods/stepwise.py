@@ -1,7 +1,42 @@
-"""
+r"""
 asymptotics.methods.stepwise
-=========================
-Step-by-step perturbation expansion for ODE problems.
+============================
+Interactive, order-by-order (step-by-step) regular perturbation for ODEs.
+
+Where :meth:`asymptotics.ODE.expand_regular` solves every order in one shot,
+this module hands back control: the order equations are set up symbolically
+immediately, but *nothing is solved* until you ask. Each order can then be
+solved with SymPy, or given a hand-supplied solution, one at a time. This is
+the tool of choice when SymPy stalls on a hard order, when you want to inspect
+or manipulate an order equation before solving it, or when teaching the
+mechanics of a perturbation expansion.
+
+Order equations
+---------------
+Substituting the regular-perturbation ansatz
+
+.. math::
+
+    u(t;\varepsilon) = \sum_{k=0}^{N} \varepsilon^{k}\, u_k(t)
+
+into the ODE and collecting powers of :math:`\varepsilon` gives one equation
+per order. The order-:math:`k` equation is linear in the unknown
+:math:`u_k(t)`, with a forcing term built from the already-known lower-order
+solutions :math:`u_0, \dots, u_{k-1}` — for example, for the Duffing equation
+:math:`u'' + u + \varepsilon u^3 = 0`,
+
+.. math::
+
+    \mathcal{O}(\varepsilon^0):\quad & u_0'' + u_0 = 0, \\
+    \mathcal{O}(\varepsilon^1):\quad & u_1'' + u_1 = -u_0^{\,3}.
+
+Each order is exposed through :attr:`StepwiseOrderEntry.ode`, which returns a
+:class:`_OdePair` wrapping both the raw *symbolic* form (with the
+:math:`u_j(t)` still symbolic) and the *substituted* form (lower-order
+solutions inserted). Call :meth:`_OdePair.as_sympy` to get the underlying
+SymPy :class:`~sympy.core.relational.Eq` for direct manipulation, or solve the
+order symbolically/numerically yourself and feed the result back with
+:meth:`StepwiseOrderEntry.set_solution`.
 
 Usage
 -----
@@ -36,20 +71,39 @@ from asymptotics.methods.regular_ode import _bc_value_at_order
 # ---------------------------------------------------------------------------
 
 class StepwiseOrderEntry:
-    """
-    One order in a step-by-step perturbation expansion.
+    r"""
+    A single order :math:`k` of a step-by-step perturbation expansion.
+
+    One of these is created per order by :func:`begin_expansion_ode` and
+    accessed via indexing the hierarchy, ``sol[k]``. It carries the order-:math:`k`
+    equation and, once solved, the solution :math:`u_k(t)`. Solve it with
+    :meth:`solve` (SymPy) or supply the answer yourself with
+    :meth:`set_solution`.
 
     Attributes
     ----------
-    order               : int
-    ode                 : Eq  — the ODE at this order (always available)
-    ode_substituted     : Eq  — ODE with lower-order solutions substituted
-                               (available once all lower orders are solved)
-    general_solution    : Expr — with free constants (after solve)
-    particular_solution : Expr — constants fixed by conditions (after solve)
-    secular             : bool
-    is_solved           : bool
-    symbol              : Function — u_k(t)
+    order : int
+        The order :math:`k` (the power of :math:`\varepsilon`).
+    symbol : sympy.Function
+        The unknown at this order, :math:`u_k(t)`.
+    general_solution : sympy.Expr or None
+        Solution with free integration constants; ``None`` until solved.
+    particular_solution : sympy.Expr or None
+        Solution with constants fixed by the problem's initial/boundary
+        conditions; ``None`` until solved.
+    secular : bool
+        ``True`` if secular (unbounded, resonant) terms were detected in the
+        solution — a signal that regular perturbation is breaking down and a
+        method such as Lindstedt–Poincaré or multiple scales is needed.
+    is_solved : bool
+        Whether this order has been solved or set. Consulted by
+        :attr:`ode`, :meth:`solve`, and the hierarchy's finalization.
+
+    See Also
+    --------
+    ode : the order-:math:`k` equation as a manipulable :class:`_OdePair`.
+    solve : attempt a SymPy solution of this order.
+    set_solution : supply the order-:math:`k` solution manually.
     """
 
     def __init__(self, order, ode_symbolic, ode_coeffs, symbol, hierarchy):
@@ -66,10 +120,34 @@ class StepwiseOrderEntry:
 
     @property
     def ode(self):
-        """
-        The ODE at this order.
-        - If lower orders not yet solved: shows symbolic form with u_k symbols
-        - If lower orders solved: shows both symbolic AND substituted forms
+        r"""
+        The order-:math:`k` equation, as a manipulable :class:`_OdePair`.
+
+        The returned pair always carries the *symbolic* form of the equation
+        (with the lower-order functions :math:`u_j(t)` left symbolic). If every
+        lower order :math:`0, \dots, k-1` has been solved, it also carries the
+        *substituted* form, in which those known solutions have been inserted
+        so the equation is ready to solve for :math:`u_k`.
+
+        Returns
+        -------
+        _OdePair
+            Pretty-prints both forms. Use :meth:`_OdePair.as_sympy` (or the
+            delegated ``.lhs`` / ``.rhs`` / ``.free_symbols`` / ``.subs``) to
+            reach the underlying SymPy :class:`~sympy.core.relational.Eq`.
+
+        Examples
+        --------
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u'' + u + eps*u**3", dependent='u', small_param='eps',
+        ...          independent='t', conditions=["u(0) = 1", "u'(0) = 0"])
+        >>> sol = eq.begin_expansion(order=2)
+        >>> sol[0].ode.as_sympy()                    # leading order
+        Eq(u_0(t) + Derivative(u_0(t), (t, 2)), 0)
+        >>> sol[0].solve()                           # doctest: +SKIP
+        >>> # once order 0 is known, order 1 gains a substituted form:
+        >>> sol[1].ode.as_sympy(substituted=False)
+        Eq(u_0(t)**3 + u_1(t) + Derivative(u_1(t), (t, 2)), 0)
         """
         h = self._hierarchy
         k = self.order
@@ -108,15 +186,41 @@ class StepwiseOrderEntry:
         return Eq(ode_expr, 0)
 
     def solve(self):
-        """
-        Try to solve this order using SymPy's dsolve.
+        r"""
+        Attempt to solve this order automatically with SymPy's ``dsolve``.
 
-        If successful, applies conditions and stores the particular solution.
-        If SymPy fails, prints a clear message with the equation and instructions.
+        Requires every lower order to be solved first (the order-:math:`k`
+        equation depends on :math:`u_0, \dots, u_{k-1}`). On success, the
+        substituted equation is solved, the problem's initial/boundary
+        conditions are applied to fix the integration constants, secular terms
+        are detected, and both the general and particular solutions are stored;
+        the order is marked solved. If it was the last pending order, the
+        hierarchy's :attr:`~StepwiseHierarchy.expansion` is assembled.
+
+        This method never raises for an unsolvable order: if the lower orders
+        are missing, or if ``dsolve`` fails, or the conditions cannot be
+        applied, it prints a clear message (with a ``set_solution`` hint) and
+        returns ``False`` so an interactive session can continue.
 
         Returns
         -------
-        True if solved, False if SymPy could not solve it.
+        bool
+            ``True`` if the order was solved, ``False`` otherwise.
+
+        See Also
+        --------
+        set_solution : supply the solution manually when this fails.
+        StepwiseHierarchy.solve_all : run :meth:`solve` across all orders.
+
+        Examples
+        --------
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u' + u + eps*u**2", dependent='u', small_param='eps',
+        ...          independent='t', conditions=['u(0) = 1'])
+        >>> sol = eq.begin_expansion(order=2)
+        >>> sol[0].solve()                           # doctest: +SKIP
+        >>> sol[0].is_solved                         # doctest: +SKIP
+        True
         """
         h   = self._hierarchy
         k   = self.order
@@ -162,18 +266,37 @@ class StepwiseOrderEntry:
         return True
 
     def set_solution(self, expr):
-        """
-        Provide the solution for this order manually.
+        r"""
+        Supply the solution :math:`u_k(t)` for this order by hand.
+
+        Use this when SymPy cannot solve the order, or when you have obtained
+        the solution elsewhere (by hand, or in Mathematica/Maple). The
+        expression should be the *particular* solution with all free
+        constants already fixed by the conditions — it is stored as both the
+        general and particular solution, secular terms are detected, and the
+        order is marked solved (finalizing the expansion if it was the last
+        pending order). No consistency check against the order equation is
+        performed; correctness is the caller's responsibility.
 
         Parameters
         ----------
-        expr : SymPy expression or str
-            The particular solution u_k(t) (with free constants already fixed).
+        expr : sympy.Expr or str
+            The solution :math:`u_k(t)`. Strings are parsed with
+            :func:`sympy.sympify`.
+
+        Returns
+        -------
+        None
+
+        See Also
+        --------
+        solve : attempt an automatic SymPy solution instead.
 
         Examples
         --------
-        >>> sol[0].set_solution(sympify("4*eta*(1 - eta)"))
-        >>> sol[0].set_solution("4*eta - 4*eta**2")
+        >>> from sympy import sympify
+        >>> sol[0].set_solution(sympify("4*eta*(1 - eta)"))   # doctest: +SKIP
+        >>> sol[0].set_solution("4*eta - 4*eta**2")           # doctest: +SKIP
         """
         h  = self._hierarchy
         t  = h.independent
@@ -227,7 +350,44 @@ def dep_name(uk):
 # ---------------------------------------------------------------------------
 
 class _OdePair:
-    """Holds symbolic and (optionally) substituted forms of an order-k ODE."""
+    r"""Both forms of an order-:math:`k` equation, with pass-through to SymPy.
+
+    Returned by :attr:`StepwiseOrderEntry.ode`. It holds the *symbolic* form
+    of the order equation (lower-order functions :math:`u_j(t)` left symbolic)
+    and, when the lower orders are known, the *substituted* form (those
+    solutions inserted). It pretty-prints both, but is otherwise a thin,
+    transparent wrapper over a live SymPy :class:`~sympy.core.relational.Eq`:
+
+    - :meth:`as_sympy` returns the underlying ``Eq`` (substituted by default);
+    - :attr:`lhs` / :attr:`rhs` give that equation's sides;
+    - any other attribute access is delegated to the equation (see
+      :meth:`__getattr__`), so ``.free_symbols``, ``.subs(...)``,
+      ``.rewrite(...)``, ``.atoms(...)``, ``.args`` all work directly.
+
+    Attributes
+    ----------
+    symbolic : sympy.Eq
+        The order equation with lower-order unknowns still symbolic.
+    substituted : sympy.Eq or None
+        The order equation with known lower-order solutions inserted; ``None``
+        until all lower orders are solved.
+    order : int
+        The order :math:`k`.
+
+    Examples
+    --------
+    >>> from asymptotics import ODE
+    >>> eq = ODE("u'' + u + eps*u**3", dependent='u', small_param='eps',
+    ...          independent='t', conditions=["u(0) = 1", "u'(0) = 0"])
+    >>> sol = eq.begin_expansion(order=2)
+    >>> pair = sol[0].ode
+    >>> pair.lhs                                  # delegated to the SymPy Eq
+    u_0(t) + Derivative(u_0(t), (t, 2))
+    >>> pair.rhs
+    0
+    >>> pair.free_symbols                         # delegated attribute
+    {t}
+    """
 
     def __init__(self, symbolic, substituted, order, eps):
         self.symbolic    = symbolic
@@ -248,11 +408,36 @@ class _OdePair:
     #     raw = sol[k].ode.as_sympy()      # the SymPy Eq itself
     #
     def as_sympy(self, substituted=True):
-        """Return the underlying SymPy ``Eq`` for direct manipulation.
+        r"""Return the underlying SymPy ``Eq`` for direct manipulation.
 
-        ``substituted=True`` (default) returns the form with the known
-        lower-order solutions inserted; ``substituted=False`` returns the
-        purely symbolic form.
+        This is the escape hatch to raw SymPy: the returned object is an
+        ordinary :class:`~sympy.core.relational.Eq` you can differentiate,
+        substitute into, ``rewrite``, ``lambdify``, or solve yourself.
+
+        Parameters
+        ----------
+        substituted : bool, optional
+            If ``True`` (default), return the form with the known lower-order
+            solutions inserted (falling back to the symbolic form when no
+            substituted form exists yet). If ``False``, always return the
+            purely symbolic form.
+
+        Returns
+        -------
+        sympy.Eq
+            The order-:math:`k` equation, ``<expr> = 0``.
+
+        Examples
+        --------
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u'' + u + eps*u**3", dependent='u', small_param='eps',
+        ...          independent='t', conditions=["u(0) = 1", "u'(0) = 0"])
+        >>> sol = eq.begin_expansion(order=2)
+        >>> eqn = sol[0].ode.as_sympy()
+        >>> eqn
+        Eq(u_0(t) + Derivative(u_0(t), (t, 2)), 0)
+        >>> eqn.lhs                                  # a normal SymPy expression
+        u_0(t) + Derivative(u_0(t), (t, 2))
         """
         if substituted and self.substituted is not None:
             return self.substituted
@@ -260,13 +445,38 @@ class _OdePair:
 
     @property
     def lhs(self):
+        """Left-hand side of the (substituted, if available) order equation.
+
+        Equivalent to ``self.as_sympy().lhs`` — a SymPy expression.
+        """
         return self.as_sympy().lhs
 
     @property
     def rhs(self):
+        """Right-hand side of the (substituted, if available) order equation.
+
+        Equivalent to ``self.as_sympy().rhs`` — normally the SymPy integer 0.
+        """
         return self.as_sympy().rhs
 
     def __getattr__(self, name):
+        r"""Delegate unknown attribute access to the underlying SymPy ``Eq``.
+
+        Any non-dunder attribute not defined on the pair itself is looked up on
+        the substituted equation (or the symbolic one when no substituted form
+        exists). This makes the pair behave like the equation for read access,
+        so SymPy methods and properties work transparently::
+
+            pair.free_symbols        # -> set of symbols
+            pair.subs(...)           # substitute
+            pair.rewrite(...)        # rewrite in another basis
+            pair.atoms(...), pair.args
+
+        Raises
+        ------
+        AttributeError
+            If the name is a dunder, or is absent on the underlying equation.
+        """
         # Delegate unknown (non-dunder) attribute access to the underlying
         # SymPy equation so the order equation can be manipulated directly:
         # .free_symbols, .subs(...), .rewrite(...), .atoms(...), .args, etc.
@@ -331,15 +541,55 @@ class _OdePair:
 # ---------------------------------------------------------------------------
 
 class StepwiseHierarchy:
-    """
-    A perturbation hierarchy built step by step.
+    r"""
+    A regular-perturbation hierarchy solved order by order, under user control.
 
-    Created by ODE.begin_expansion(order=N). Equations are set up
-    immediately; solutions are obtained one order at a time via
-    sol[k].solve() or sol[k].set_solution(expr).
+    Created by :meth:`asymptotics.ODE.begin_expansion`. The order equations for
+    :math:`u_0, \dots, u_N` are set up symbolically at construction, but none is
+    solved until requested. Index the hierarchy to reach a single order,
+    ``sol[k]`` (a :class:`StepwiseOrderEntry`), and solve it with
+    ``sol[k].solve()`` or ``sol[k].set_solution(expr)``; or run
+    :meth:`solve_all` to attempt every remaining order.
 
-    Once all orders are solved, the full standard API is available:
-    sol.expansion, sol.show(), sol.to_latex(), sol.eval(), sol.compare_numeric()
+    Once **all** orders are solved the assembled expansion
+
+    .. math::
+
+        u(t;\varepsilon) = \sum_{k=0}^{N} \varepsilon^{k}\, u_k(t)
+                           + \mathcal{O}(\varepsilon^{N+1})
+
+    becomes available on :attr:`expansion`, and the shared hierarchy API
+    (:meth:`show`, :meth:`to_latex`, :meth:`eval`, :meth:`compare_numeric`)
+    turns on. Those four methods raise :class:`RuntimeError` if called while any
+    order is still pending.
+
+    Attributes
+    ----------
+    entries : list of StepwiseOrderEntry
+        The per-order entries, index :math:`k = 0, \dots, N`.
+    small_param : sympy.Symbol
+        The small parameter :math:`\varepsilon`.
+    independent : sympy.Symbol
+        The independent variable :math:`t`.
+    expansion : sympy.Expr or None
+        The assembled expansion; ``None`` until all orders are solved.
+
+    See Also
+    --------
+    n_solved, n_pending : progress counters.
+    begin_expansion_ode : the constructor.
+
+    Examples
+    --------
+    >>> from asymptotics import ODE
+    >>> eq = ODE("u' + u + eps*u**2", dependent='u', small_param='eps',
+    ...          independent='t', conditions=['u(0) = 1'])
+    >>> sol = eq.begin_expansion(order=2)
+    >>> len(sol), sol.n_solved, sol.n_pending
+    (3, 0, 3)
+    >>> sol.solve_all()                              # doctest: +SKIP
+    >>> sol.expansion                                # doctest: +SKIP
+    eps**2*(exp(-t) - 2*exp(-2*t) + exp(-3*t)) + eps*(-exp(-t) + exp(-2*t)) + exp(-t)
     """
 
     def __init__(self):
@@ -355,6 +605,23 @@ class StepwiseHierarchy:
         self.expansion       = None  # set after finalize
 
     def __getitem__(self, k: int) -> StepwiseOrderEntry:
+        r"""Return the order-:math:`k` entry, ``sol[k]``.
+
+        Parameters
+        ----------
+        k : int
+            Order index, :math:`0 \le k \le N`.
+
+        Returns
+        -------
+        StepwiseOrderEntry
+
+        Raises
+        ------
+        IndexError
+            If ``k`` is outside ``0 .. len(sol) - 1``. Negative indexing is
+            not supported.
+        """
         if k < 0 or k >= len(self.entries):
             raise IndexError(
                 f"\n\n  Order {k} out of range. Available: 0 to {len(self.entries)-1}\n"
@@ -362,20 +629,46 @@ class StepwiseHierarchy:
         return self.entries[k]
 
     def __len__(self):
+        r"""Number of orders in the hierarchy, i.e. :math:`N + 1`."""
         return len(self.entries)
 
     @property
     def n_solved(self):
+        """int : How many orders have been solved or set so far."""
         return sum(1 for e in self.entries if e.is_solved)
 
     @property
     def n_pending(self):
+        """int : How many orders remain unsolved."""
         return sum(1 for e in self.entries if not e.is_solved)
 
     def solve_all(self):
-        """
-        Try to solve all unsolved orders using SymPy.
-        Stops and reports when SymPy cannot solve an order.
+        r"""
+        Attempt to solve every still-unsolved order, in ascending order.
+
+        Calls :meth:`StepwiseOrderEntry.solve` on each pending order from the
+        lowest up. Stops at the first order SymPy cannot handle, printing a
+        ``set_solution`` hint; solve that order manually and call
+        :meth:`solve_all` again to resume. When the last order is solved the
+        expansion is finalized and :attr:`expansion` becomes available.
+
+        Returns
+        -------
+        None
+
+        See Also
+        --------
+        StepwiseOrderEntry.solve, StepwiseOrderEntry.set_solution
+
+        Examples
+        --------
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u' + u + eps*u**2", dependent='u', small_param='eps',
+        ...          independent='t', conditions=['u(0) = 1'])
+        >>> sol = eq.begin_expansion(order=2)
+        >>> sol.solve_all()                          # doctest: +SKIP
+        >>> sol.n_pending                            # doctest: +SKIP
+        0
         """
         for e in self.entries:
             if not e.is_solved:
@@ -484,12 +777,62 @@ class StepwiseHierarchy:
 
     def show(self, mode: str = "auto") -> None:
         """
-        Display the hierarchy. Shows equations for all orders.
-        Shows solutions for solved orders.
+        Display the hierarchy: order equations plus solutions where available.
+
+        Unlike the other three standard-API methods, :meth:`show` works at any
+        stage — it shows every order's equation (symbolic, and substituted once
+        the lower orders are known), the solution for each solved order, and the
+        assembled expansion once everything is solved.
+
+        Parameters
+        ----------
+        mode : {'auto', 'text', 'latex'}, optional
+            Rendering mode. ``'auto'`` (default) renders LaTeX in Jupyter and
+            plain text in a terminal.
+
+        Returns
+        -------
+        None
+            Output is displayed as a side effect.
+
+        Examples
+        --------
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u' + u + eps*u**2", dependent='u', small_param='eps',
+        ...          independent='t', conditions=['u(0) = 1'])
+        >>> sol = eq.begin_expansion(order=2)
+        >>> sol.show(mode='text')                    # doctest: +SKIP
         """
         _show_stepwise(self, mode=mode)
 
     def to_latex(self, environment='align', show_orders=False, filename=None):
+        r"""
+        Export the solved expansion as LaTeX source.
+
+        Requires all orders to be solved.
+
+        Parameters
+        ----------
+        environment : str, optional
+            LaTeX math environment: ``'align'`` (default), ``'equation'``, or
+            ``'gather'``.
+        show_orders : bool, optional
+            If ``True``, also emit each order :math:`u_k` separately. Default
+            ``False``.
+        filename : str, optional
+            If given, write the source to this file; otherwise return it.
+
+        Returns
+        -------
+        str
+            The LaTeX source. The small parameter is rendered as
+            ``\varepsilon``.
+
+        Raises
+        ------
+        RuntimeError
+            If any order is still pending.
+        """
         self._check_all_solved('to_latex')
         from asymptotics.latex_export import to_latex as _to_latex
         return _to_latex(self._as_ode_hierarchy(),
@@ -498,11 +841,74 @@ class StepwiseHierarchy:
                          filename=filename)
 
     def eval(self, eps, at=None, params=None):
+        r"""
+        Evaluate the assembled expansion numerically. Requires all orders solved.
+
+        Parameters
+        ----------
+        eps : float or list of float
+            Value(s) of the small parameter :math:`\varepsilon`.
+        at : array-like, optional
+            Values of the independent variable :math:`t` at which to evaluate.
+        params : dict, optional
+            Values for any remaining free symbolic parameters.
+
+        Returns
+        -------
+        numpy.ndarray or dict
+            An ndarray of :math:`u` values when ``eps`` is scalar; a dict
+            ``{eps: ndarray}`` when ``eps`` is a list.
+
+        Raises
+        ------
+        RuntimeError
+            If any order is still pending.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from asymptotics import ODE
+        >>> eq = ODE("u' + u + eps*u**2", dependent='u', small_param='eps',
+        ...          independent='t', conditions=['u(0) = 1'])
+        >>> sol = eq.begin_expansion(order=2)
+        >>> sol.solve_all()                          # doctest: +SKIP
+        >>> sol.eval(eps=0.1, at=np.array([0.0, 1.0]))   # doctest: +SKIP
+        array([1.        , 0.34609498])
+        """
         self._check_all_solved('eval')
         from asymptotics.eval import eval_hierarchy
         return eval_hierarchy(self, eps, at=at, params=params)
 
     def compare_numeric(self, eps, params=None, **kwargs):
+        r"""
+        Compare the expansion against a SciPy numerical solution.
+
+        Requires all orders to be solved. Integrates the original ODE with
+        SciPy and returns a comparison (with a plot) against the assembled
+        expansion.
+
+        Parameters
+        ----------
+        eps : float
+            Value of the small parameter :math:`\varepsilon`.
+        params : dict, optional
+            Values for any remaining free symbolic parameters.
+        **kwargs
+            Forwarded to :func:`asymptotics.compare_numeric` (e.g.
+            ``plot_range``, ``n_points``, ``filename``).
+
+        Returns
+        -------
+        dict
+            Comparison results, including sampled points, the expansion and
+            numerical solutions, error norms, solver settings, and a matplotlib
+            figure.
+
+        Raises
+        ------
+        RuntimeError
+            If any order is still pending.
+        """
         self._check_all_solved('compare_numeric')
         from asymptotics.numerics import compare_numeric
         return compare_numeric(self, eps, params=params, **kwargs)
@@ -650,9 +1056,46 @@ def _show_text(h):
 # ---------------------------------------------------------------------------
 
 def begin_expansion_ode(problem, order: int) -> StepwiseHierarchy:
-    """
-    Set up the perturbation hierarchy without solving anything.
-    Extracts order-by-order equations symbolically.
+    r"""
+    Build a step-by-step perturbation hierarchy without solving anything.
+
+    Substitutes the regular-perturbation ansatz
+    :math:`u = \sum_{k=0}^{N} \varepsilon^{k} u_k(t)` into the problem's ODE,
+    expands in powers of :math:`\varepsilon` up to order ``N``, and collects the
+    coefficient of each power as the order-:math:`k` equation. The equations are
+    stored (symbolic and unsolved) on a fresh :class:`StepwiseHierarchy`; no
+    ``dsolve`` is attempted here. This is the backend for
+    :meth:`asymptotics.ODE.begin_expansion`.
+
+    Parameters
+    ----------
+    problem : ODE
+        The perturbation problem. Its small parameter must appear in the
+        equation.
+    order : int
+        Highest power :math:`N` of :math:`\varepsilon` to expand to; produces
+        orders :math:`0, \dots, N`.
+
+    Returns
+    -------
+    StepwiseHierarchy
+        With ``order + 1`` unsolved entries.
+
+    Raises
+    ------
+    NoSmallParameterError
+        If the small parameter does not appear in the equation.
+
+    Examples
+    --------
+    >>> from asymptotics import ODE
+    >>> eq = ODE("u'' + u + eps*u**3", dependent='u', small_param='eps',
+    ...          independent='t', conditions=["u(0) = 1", "u'(0) = 0"])
+    >>> sol = eq.begin_expansion(order=2)        # delegates here
+    >>> len(sol)
+    3
+    >>> sol[0].ode.as_sympy()
+    Eq(u_0(t) + Derivative(u_0(t), (t, 2)), 0)
     """
     from asymptotics.core.exceptions import NoSmallParameterError
 

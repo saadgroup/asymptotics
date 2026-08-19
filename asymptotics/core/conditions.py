@@ -62,7 +62,25 @@ class LimitCondition:
 
 
 class ConditionError(Exception):
-    """Raised when conditions are missing, over-specified, or inconsistent."""
+    """
+    Invalid initial/boundary conditions for an ODE problem.
+
+    Raised while parsing or validating the ``conditions`` supplied to an
+    :class:`~asymptotics.ODE`.  Typical triggers are:
+
+    - a condition string that cannot be parsed (e.g. ``"u[0] = 1"`` instead of
+      ``"u(0) = 1"``, or a malformed ``lim(...)`` limit condition);
+    - a condition that names a variable other than the dependent one;
+    - the wrong *number* of conditions for the ODE order (an order-:math:`n`
+      ODE needs exactly :math:`n` conditions);
+    - conditions at more than two distinct points (regular perturbation
+      supports at most two boundary points); or
+    - conflicting conditions that assign different values to the same
+      derivative at the same point.
+
+    The exception message describes the specific problem and the expected
+    condition formats.
+    """
     pass
 
 

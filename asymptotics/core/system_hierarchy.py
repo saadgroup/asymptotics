@@ -1,6 +1,6 @@
 """
 asymptotics.core.system_hierarchy
-==============================
+=================================
 Container for the perturbation hierarchy of a coupled algebraic system.
 
 show() renders the full coupled system at each order:
@@ -16,18 +16,42 @@ from sympy import Symbol, Expr, latex, Eq, pretty
 
 
 class SystemHierarchy:
-    """
-    Perturbation hierarchy for a system of coupled algebraic equations.
+    r"""
+    Perturbation hierarchy for a coupled algebraic system.
 
-    Stores one OrderHierarchy per dependent variable (for sol["x"] access)
-    plus the full coupled system at each order (for show()).
+    Returned by ``AlgebraicSystem.expand_regular(...)``.  It bundles, per
+    dependent variable, an :class:`~asymptotics.OrderHierarchy` (so individual
+    variables are reachable via ``sol["x"]``) together with the *full coupled*
+    system solved order by order (used by :meth:`show`).  The container is
+    dict-like over its variable names and exposes the standard four-method
+    API (:meth:`eval`, :meth:`to_latex`, :meth:`compare_numeric`,
+    :meth:`show`).
 
     Attributes
     ----------
     variables : list of str
-    hierarchies : dict  — variable name -> OrderHierarchy
-    coupled_orders : dict — order k -> {equations, unknowns, solutions}
-    small_param : Symbol
+        Dependent-variable names, in the order they were declared.
+    hierarchies : dict
+        ``{variable_name: OrderHierarchy}`` — the per-variable expansion.
+    coupled_orders : dict
+        ``{order_k: {'equations', 'unknowns', 'solutions'}}`` — the coupled
+        system, its order-:math:`k` unknowns, and the solved terms at each
+        order, used for display.
+    small_param : sympy.Symbol
+        The small parameter symbol the system is expanded in.
+
+    Examples
+    --------
+    >>> from asymptotics import AlgebraicSystem
+    >>> sys = AlgebraicSystem(equations=["x**2 + eps*y - 1",
+    ...                                   "y**2 + eps*x - 1"],
+    ...                       dependents=["x", "y"], small_param="eps")
+    >>> sol = sys.expand_regular(order=3)
+    >>> sol.variables
+    ['x', 'y']
+    >>> r = sol.eval(eps=0.1)
+    >>> round(float(r['x']), 6)
+    0.95125
     """
 
     def __init__(self):
@@ -42,6 +66,26 @@ class SystemHierarchy:
     # ------------------------------------------------------------------
 
     def __getitem__(self, var: str):
+        """
+        Return the per-variable :class:`OrderHierarchy` for ``var``.
+
+        Parameters
+        ----------
+        var : str
+            A dependent-variable name (e.g. ``"x"``).
+
+        Returns
+        -------
+        OrderHierarchy
+            The expansion hierarchy for that variable, giving access to
+            ``sol["x"][k]`` (order-:math:`k` term) and ``sol["x"].expansion``.
+
+        Raises
+        ------
+        KeyError
+            If ``var`` is not a variable of this system.  The message lists the
+            available variable names.
+        """
         if var not in self.hierarchies:
             raise KeyError(
                 f"Variable '{var}' not in system. "
@@ -50,9 +94,28 @@ class SystemHierarchy:
         return self.hierarchies[var]
 
     def __iter__(self) -> Iterator[str]:
+        """
+        Iterate over the dependent-variable names, in declaration order.
+
+        Yields
+        ------
+        str
+            Each variable name, so ``for v in sol:`` and ``list(sol)`` behave
+            like iterating the keys of a dict.
+        """
         return iter(self.variables)
 
     def items(self) -> Iterator[Tuple]:
+        """
+        Iterate over ``(variable_name, OrderHierarchy)`` pairs.
+
+        Yields
+        ------
+        tuple of (str, OrderHierarchy)
+            One pair per variable, in declaration order — the dict-style way to
+            walk every per-variable expansion, e.g.
+            ``for name, h in sol.items(): ...``.
+        """
         return ((v, self.hierarchies[v]) for v in self.variables)
 
     def __len__(self):
@@ -63,77 +126,178 @@ class SystemHierarchy:
     # ------------------------------------------------------------------
 
     def eval(self, eps, **kwargs):
-        """
-        Evaluate the algebraic system expansion at given eps values.
+        r"""
+        Evaluate the coupled-system expansion numerically.
+
+        Substitutes the small parameter into every variable's expansion and
+        returns concrete numbers for each variable.  Thin wrapper over
+        :func:`asymptotics.eval.eval_hierarchy`.
 
         Parameters
         ----------
         eps : float or list of float
+            Value(s) of the small parameter.
+        **kwargs
+            Forwarded to :func:`~asymptotics.eval.eval_hierarchy` (e.g.
+            ``params`` for any remaining symbolic parameters).
 
         Returns
         -------
-        dict {var_name: float or ndarray}
+        dict
+            ``{variable_name: value}``.  Each value is a ``float`` when ``eps``
+            is scalar, or an ``ndarray`` (one entry per eps) when ``eps`` is a
+            list.
 
         Examples
         --------
+        >>> from asymptotics import AlgebraicSystem
+        >>> sys = AlgebraicSystem(equations=["x**2 + eps*y - 1",
+        ...                                   "y**2 + eps*x - 1"],
+        ...                       dependents=["x", "y"], small_param="eps")
+        >>> sol = sys.expand_regular(order=3)
         >>> r = sol.eval(eps=0.1)
-        >>> r['x'], r['y']
+        >>> round(float(r['x']), 6), round(float(r['y']), 6)
+        (0.95125, 0.95125)
         >>> r = sol.eval(eps=[0.1, 0.2, 0.3])
-        >>> r['x']  # ndarray
+        >>> r['x'].shape
+        (3,)
         """
         from asymptotics.eval import eval_hierarchy
         return eval_hierarchy(self, eps, **kwargs)
 
     def to_latex(self, environment='align', show_orders=False, filename=None):
-        """
-        Export this expansion as LaTeX source.
+        r"""
+        Export this coupled-system expansion as LaTeX source.
+
+        Thin wrapper over :func:`asymptotics.latex_export.to_latex`; produces
+        one expansion block per variable, with the small parameter always
+        rendered as ``\varepsilon``.
 
         Parameters
         ----------
-        environment : str
-            'align' (default), 'equation', or 'gather'.
-        show_orders : bool
-            Include each order separately. Default False.
+        environment : str, optional
+            LaTeX math environment — ``'align'`` (default), ``'equation'``, or
+            ``'gather'``.
+        show_orders : bool, optional
+            If ``True``, list each order term separately in addition to the
+            assembled expansion.  Default ``False``.
         filename : str, optional
-            Save to file if given, otherwise print to console.
+            If given, write the source to this file; otherwise print it to the
+            console.  The string is returned in both cases.
 
         Returns
         -------
-        str — the LaTeX source string
+        str
+            The LaTeX source string: one expansion block per variable
+            (``x(varepsilon) = ...``), optionally preceded by the order-by-order
+            terms when ``show_orders=True``.
+
+        See Also
+        --------
+        show : Display the coupled system order by order, including the full
+            coupled system at each order.
+        __getitem__ : ``sol["x"].to_latex()`` exports a single variable's
+            expansion on its own.
+
+        Examples
+        --------
+        >>> from asymptotics import AlgebraicSystem
+        >>> sys = AlgebraicSystem(equations=["x**2 + eps*y - 1",
+        ...                                   "y**2 + eps*x - 1"],
+        ...                       dependents=["x", "y"], small_param="eps")
+        >>> sol = sys.expand_regular(order=3)
+        >>> src = sol.to_latex()   # doctest: +SKIP
+        >>> src.startswith('%')    # doctest: +SKIP
+        True
         """
         from asymptotics.latex_export import to_latex
         return to_latex(self, environment=environment,
                         show_orders=show_orders, filename=filename)
 
     def compare_numeric(self, eps, params=None, **kwargs):
-        """
-        Compare algebraic system expansion against scipy root-finder.
+        r"""
+        Compare the system expansion against ``scipy.optimize.root``.
+
+        For each eps value the coupled system is solved numerically (warm-started
+        from the previous solve) and plotted against the perturbation expansion,
+        one subplot per variable.  Thin wrapper over
+        :func:`asymptotics.numerics.compare_numeric`.
 
         Parameters
         ----------
         eps : float or list of float
-            Plots x(eps) vs exact roots over the eps range.
+            Value(s) of the small parameter used as the x-axis; the numerical
+            root and the expansion are compared over these values.
+        params : dict, optional
+            Numerical values for any remaining symbolic parameters.
+        **kwargs
+            Forwarded to :func:`~asymptotics.numerics.compare_numeric`.
 
         Returns
         -------
-        dict with 'eps', 'perturbation', 'numerical', 'fig'
+        dict
+            ``'eps'`` : ndarray
+                The sorted eps grid.
+            ``'perturbation'`` : dict
+                ``{variable: ndarray}`` — expansion values over ``'eps'``.
+            ``'numerical'`` : dict
+                ``{variable: ndarray}`` — numerical roots over ``'eps'``.
+            ``'fig'`` : matplotlib.figure.Figure
+                The comparison figure.
+            ``'errors'`` : dict
+                ``{eps_value: {variable: {'abs', 'rel'}}}`` — per-variable
+                absolute and relative error at each eps value.
+            ``'settings'`` : dict
+                The SciPy solver settings used for the reference.
+
+        Examples
+        --------
+        >>> import matplotlib
+        >>> matplotlib.use('Agg')
+        >>> from asymptotics import AlgebraicSystem
+        >>> sys = AlgebraicSystem(equations=["x**2 + eps*y - 1",
+        ...                                   "y**2 + eps*x - 1"],
+        ...                       dependents=["x", "y"], small_param="eps")
+        >>> sol = sys.expand_regular(order=3)
+        >>> res = sol.compare_numeric(eps=[0.1, 0.2, 0.3])
+        >>> sorted(res)
+        ['eps', 'errors', 'fig', 'numerical', 'perturbation', 'settings']
+        >>> res['settings']['solver']
+        'scipy.optimize.root'
         """
         from asymptotics.numerics import compare_numeric
         return compare_numeric(self, eps, params=params, **kwargs)
 
     def show(self, orders=None, mode: str = "auto") -> None:
-        """
-        Render the full coupled hierarchy — coupled equations at each order.
+        r"""
+        Display the coupled hierarchy: the full system solved order by order.
 
-        At each order shows the full system:
+        Renders the ansatz for each variable, then, at each order, the full
+        coupled system together with the terms it determines, and finally the
+        assembled expansion for every variable, for example::
+
             O(ε¹):  2x₁ + y₀ = 0
                     x₀ + 2y₁ = 0
                     ⟹  x₁ = -1/2,  y₁ = -1/2
 
+        In a Jupyter environment the output is typeset with LaTeX/MathJax; in a
+        plain terminal it falls back to a Unicode text rendering.  This method
+        prints/displays and returns ``None`` (use :meth:`to_latex` to capture
+        the LaTeX source as a string).
+
         Parameters
         ----------
         orders : list of int, optional
-        mode : str — "auto", "jupyter", or "text"
+            If given, only these orders are shown.  By default every computed
+            order is displayed.
+        mode : str, optional
+            Rendering mode: ``"auto"`` (default — LaTeX if IPython is
+            available, else text), ``"jupyter"`` (force LaTeX display), or
+            ``"text"`` (force the plain-text rendering).
+
+        Returns
+        -------
+        None
         """
         try:
             from IPython.display import display, HTML, Math

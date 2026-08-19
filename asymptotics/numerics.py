@@ -17,24 +17,125 @@ from sympy import Symbol, symbols, lambdify, solve, Integer, sympify
 # ---------------------------------------------------------------------------
 
 def compare_numeric(hierarchy, eps, params=None, filename=None, **kwargs):
-    """
-    Compare a perturbation expansion against a numerical solution.
+    r"""
+    Compare a perturbation expansion against a numerical reference solution.
+
+    This is the engine behind ``sol.compare_numeric(...)``.  It validates the
+    symbolic asymptotic expansion by solving the *original* (unexpanded)
+    problem numerically with SciPy and overlaying the two on a single figure.
+    The solver is chosen from the hierarchy type:
+
+    ==========================================  =============================
+    Hierarchy                                   SciPy reference solver
+    ==========================================  =============================
+    ODE / Stepwise (IVP)                        :func:`scipy.integrate.solve_ivp`
+    ODE (BVP), boundary layer                   :func:`scipy.integrate.solve_bvp`
+    Lindstedt / multiple scales (oscillators)   :func:`scipy.integrate.solve_ivp`
+    ODE system                                  :func:`scipy.integrate.solve_ivp`
+    Algebraic equation / system                 :func:`scipy.optimize.root`
+    ==========================================  =============================
+
+    The returned dict is augmented (best-effort) with quantitative error norms
+    and the exact solver settings used, so a comparison is reproducible.
 
     Parameters
     ----------
-    hierarchy : any perturbation hierarchy object
-    eps : float
-        Value of the small parameter to use.
+    hierarchy : perturbation hierarchy
+        Any of the hierarchy objects produced by an ``expand_*`` method
+        (``ODEHierarchy``, ``LindstedtHierarchy``, ``OrderHierarchy``,
+        ``SystemHierarchy``, ...).
+    eps : float or iterable of float
+        Value(s) of the small parameter.  A scalar is normalised to a
+        one-element list internally; a list produces one curve pair per value
+        (and one error entry per value).
+    params : dict, optional
+        Numerical values for any symbolic parameters that remain in the
+        equation, e.g. ``{'a': 0.5, 'b': 2.0}``.  Required (with all keys
+        present) whenever the original problem carried symbolic parameters,
+        otherwise a ``ValueError`` is raised.
     filename : str, optional
-        If given, save the figure to this path (e.g. 'result.pdf', 'result.png').
-        Uses bbox_inches='tight' automatically.
+        If given, the resulting figure is saved to this path (format inferred
+        from the extension, e.g. ``'out.pdf'``/``'out.png'``) with
+        ``bbox_inches='tight'``.
     **kwargs
-        plot_range : [a, b] — domain for plotting (ODE only)
-        n_points   : int — number of plot points (default 300)
+        Forwarded to the per-type solver.  Commonly:
+
+        plot_range : [a, b]
+            Domain for plotting / integration (ODE types).  Inferred from the
+            problem's conditions when omitted.
+        n_points : int
+            Number of plotting points (default 300 for ODEs, 500 for
+            oscillators, 400 for boundary layers).
 
     Returns
     -------
-    dict with keys depending on problem type (see individual solvers)
+    dict
+        Keys depend on the problem type.  For ODE, oscillator, stepwise and
+        ODE-system hierarchies:
+
+        ``'t'`` : ndarray
+            The evaluation grid (independent variable), shape ``(n_points,)``.
+        ``'u_pert'`` : dict
+            ``{eps_value: ndarray}`` — the perturbation expansion sampled on
+            ``'t'``.  For ODE systems each value is itself
+            ``{variable: ndarray}``.
+        ``'u_numerical'`` : dict
+            ``{eps_value: ndarray}`` — the SciPy reference solution on the same
+            grid, keyed identically to ``'u_pert'``.
+        ``'fig'`` : matplotlib.figure.Figure
+            The comparison figure (always present; save it via ``filename`` or
+            ``result['fig'].savefig(...)``).
+        ``'errors'`` : dict
+            ``{eps_value: {...}}`` — error norms of the expansion against the
+            reference, per eps value.  For ODE-type problems each entry is the
+            :func:`error_norms` dict ``{'L2', 'Linf', 'L2_rel', 'Linf_rel'}``
+            (per-variable for systems).  For algebraic problems each entry is
+            ``{'abs', 'rel'}`` (per-variable for systems).
+        ``'settings'`` : dict
+            The SciPy solver, method, and tolerances used for the reference
+            (e.g. ``{'solver': 'scipy.integrate.solve_ivp', 'method': 'RK45',
+            'rtol': 1e-10, 'atol': 1e-12}``), for reproducible reporting.
+
+        Algebraic equations/systems instead return ``'eps'`` (the sorted eps
+        grid used as the x-axis), ``'perturbation'`` and ``'numerical'``
+        (scalar arrays, or ``{variable: array}`` for systems), plus ``'fig'``,
+        ``'errors'`` and ``'settings'``.  Boundary-layer hierarchies return
+        ``'x'``, ``'results'`` (``{eps: {'u_outer', 'u_inner', 'u_expansion',
+        'u_numerical'}}``), ``'fig'``, ``'errors'`` and ``'settings'``.
+
+    Raises
+    ------
+    ValueError
+        If the equation has symbolic parameters and ``params`` is missing or
+        incomplete.
+    TypeError
+        If ``hierarchy`` is not a supported hierarchy type.
+    NotImplementedError
+        For ODE BVPs that contain limit (singular) boundary conditions, which
+        SciPy's BVP solver cannot handle reliably.
+
+    Notes
+    -----
+    The ``'errors'`` and ``'settings'`` keys are attached defensively: if the
+    error/settings computation fails for any reason it is silently skipped so
+    that the primary comparison (and its figure) is never lost.
+
+    Examples
+    --------
+    >>> import matplotlib
+    >>> matplotlib.use('Agg')          # non-interactive backend
+    >>> import numpy as np
+    >>> from asymptotics import ODE, compare_numeric
+    >>> eq  = ODE("u' + u + eps*u**2", small_param='eps',
+    ...           conditions=["u(0) = 1"])          # doctest: +SKIP
+    >>> sol = eq.expand_regular(order=2)            # doctest: +SKIP
+    >>> res = compare_numeric(sol, eps=0.1)         # doctest: +SKIP
+    >>> sorted(res)                                 # doctest: +SKIP
+    ['errors', 'fig', 'settings', 't', 'u_numerical', 'u_pert']
+    >>> res['settings']['solver']                   # doctest: +SKIP
+    'scipy.integrate.solve_ivp'
+    >>> res['errors'][0.1]['L2'] < 1e-3             # e.g. True   # doctest: +SKIP
+    True
     """
     # Normalize eps: scalar -> single-element list, list -> list
     if not hasattr(eps, '__iter__'):
@@ -112,8 +213,30 @@ def compare_numeric(hierarchy, eps, params=None, filename=None, **kwargs):
 # ---------------------------------------------------------------------------
 
 def error_norms(u_ref, u_approx, x=None):
-    """
-    Error between an approximation and a reference solution.
+    r"""
+    L2 and L-infinity error between an approximation and a reference solution.
+
+    Computes absolute and relative error norms between a reference (numerical)
+    solution and an approximation (typically a perturbation expansion) sampled
+    at the same points.
+
+    The absolute norms are
+
+    .. math::
+
+        \|u_\text{approx} - u_\text{ref}\|_2, \qquad
+        \|u_\text{approx} - u_\text{ref}\|_\infty
+        = \max_i \bigl|u_{\text{approx},i} - u_{\text{ref},i}\bigr|,
+
+    and the relative norms divide these by the corresponding norm of the
+    reference,
+
+    .. math::
+
+        \frac{\|u_\text{approx} - u_\text{ref}\|_2}{\|u_\text{ref}\|_2},
+        \qquad
+        \frac{\|u_\text{approx} - u_\text{ref}\|_\infty}
+             {\|u_\text{ref}\|_\infty}.
 
     Parameters
     ----------
@@ -123,18 +246,68 @@ def error_norms(u_ref, u_approx, x=None):
         Approximate (perturbation) solution values, same shape as ``u_ref``.
     x : array_like, optional
         Grid on which the two solutions are sampled.  If given, the L2 norm is
-        the grid-independent RMS integral
-        :math:`\\sqrt{\\int (u_\\text{approx}-u_\\text{ref})^2\\,dx / (b-a)}`
-        (evaluated by the trapezoidal rule), so the reported value does not
-        depend on the number of sample points.  If omitted, the discrete RMS
-        over the samples is used.
+        the grid-independent root-mean-square integral
+
+        .. math::
+
+            \|u_\text{approx} - u_\text{ref}\|_2 =
+            \sqrt{\frac{1}{b-a}\int_a^b
+                  \bigl(u_\text{approx}-u_\text{ref}\bigr)^2\,dx},
+
+        evaluated by the trapezoidal rule (with :math:`a`, :math:`b` the grid
+        endpoints), so the reported value does not depend on the number of
+        sample points.  The relative L2 norm uses the same integral form for
+        the reference.  If ``x`` is omitted, the discrete RMS
+        :math:`\sqrt{\tfrac{1}{N}\sum_i (u_{\text{approx},i}-u_{\text{ref},i})^2}`
+        over the samples is used instead.
 
     Returns
     -------
     dict
-        ``{'L2', 'Linf', 'L2_rel', 'Linf_rel'}`` — absolute and relative
-        (normalised by the corresponding norm of ``u_ref``) errors.  ``NaN``
-        entries in either array are ignored.
+        A dict with four float entries:
+
+        ``'L2'`` : float
+            Absolute L2 (RMS or grid-independent RMS-integral) error.
+        ``'Linf'`` : float
+            Absolute maximum (L-infinity) error.
+        ``'L2_rel'`` : float
+            L2 error normalised by the L2 norm of ``u_ref`` (``NaN`` if that
+            norm is zero).
+        ``'Linf_rel'`` : float
+            L-infinity error normalised by ``max|u_ref|`` (``NaN`` if zero).
+
+    Notes
+    -----
+    Non-finite (``NaN``/``inf``) samples in either array are masked out before
+    the norms are computed.  If nothing finite remains, all four entries are
+    ``NaN``.  When ``x`` is supplied the samples are sorted by ``x`` first, so
+    an unordered grid is handled correctly; a degenerate grid (single point or
+    zero span) falls back to the discrete RMS.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from asymptotics import error_norms
+    >>> u_ref    = np.array([1.0, 2.0, 3.0])
+    >>> u_approx = np.array([1.1, 2.0, 2.8])
+    >>> e = error_norms(u_ref, u_approx)
+    >>> round(e['L2'], 6)
+    0.129099
+    >>> round(e['Linf'], 6)
+    0.2
+    >>> round(e['L2_rel'], 6)
+    0.059761
+    >>> round(e['Linf_rel'], 6)
+    0.066667
+
+    With an explicit grid the L2 norm becomes the grid-independent RMS
+    integral.  For a uniform 0.1 offset on ``x = [0, 1, 2]`` it equals 0.1:
+
+    >>> x  = np.array([0.0, 1.0, 2.0])
+    >>> ur = np.array([0.0, 1.0, 2.0])
+    >>> ua = ur + 0.1
+    >>> round(error_norms(ur, ua, x)['L2'], 6)
+    0.1
     """
     u_ref    = np.asarray(u_ref, dtype=float)
     u_approx = np.asarray(u_approx, dtype=float)
