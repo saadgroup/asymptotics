@@ -180,6 +180,7 @@ class LindstedtOrderEntry:
         self.particular_solution  = particular_solution
         self.symbol               = symbol
         self.solution             = particular_solution   # alias
+        self.equation             = ode   # uniform per-order API
 
     @property
     def secular(self):

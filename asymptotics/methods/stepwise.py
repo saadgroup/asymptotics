@@ -235,6 +235,50 @@ class _OdePair:
         self.order       = order
         self._eps        = eps
 
+    # -- Low-level access -------------------------------------------------
+    # The order-k equation is a live SymPy object.  In addition to the
+    # ``symbolic`` and ``substituted`` attributes, the pair transparently
+    # exposes the underlying equation's SymPy interface so it can be
+    # manipulated directly, e.g.::
+    #
+    #     eqn = sol[k].ode                 # this pair (pretty-prints)
+    #     eqn.lhs, eqn.rhs                 # SymPy expressions
+    #     eqn.free_symbols                 # -> set of symbols
+    #     eqn.subs(...), eqn.rewrite(...)  # SymPy methods
+    #     raw = sol[k].ode.as_sympy()      # the SymPy Eq itself
+    #
+    def as_sympy(self, substituted=True):
+        """Return the underlying SymPy ``Eq`` for direct manipulation.
+
+        ``substituted=True`` (default) returns the form with the known
+        lower-order solutions inserted; ``substituted=False`` returns the
+        purely symbolic form.
+        """
+        if substituted and self.substituted is not None:
+            return self.substituted
+        return self.symbolic
+
+    @property
+    def lhs(self):
+        return self.as_sympy().lhs
+
+    @property
+    def rhs(self):
+        return self.as_sympy().rhs
+
+    def __getattr__(self, name):
+        # Delegate unknown (non-dunder) attribute access to the underlying
+        # SymPy equation so the order equation can be manipulated directly:
+        # .free_symbols, .subs(...), .rewrite(...), .atoms(...), .args, etc.
+        if name.startswith('__') and name.endswith('__'):
+            raise AttributeError(name)
+        d = object.__getattribute__(self, '__dict__')
+        target = d.get('substituted') if d.get('substituted') is not None \
+            else d.get('symbolic')
+        if target is not None and hasattr(target, name):
+            return getattr(target, name)
+        raise AttributeError(f"'_OdePair' object has no attribute {name!r}")
+
     def __repr__(self):
         from sympy import latex
         eps_sym = self._eps

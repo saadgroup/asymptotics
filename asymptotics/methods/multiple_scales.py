@@ -202,6 +202,11 @@ class MultScalesOrderEntry:
         return self.pde
 
     @property
+    def equation(self):
+        """Uniform per-order API alias: the order-k governing equation."""
+        return self.pde
+
+    @property
     def secular(self):
         """True if resonant (secular) terms were present at this order.
         Computed from ``secular_cos`` and ``secular_sin``."""

@@ -37,6 +37,7 @@ class ODESystemOrderEntry:
         self.particular_solution = particular_solution
         self.symbol              = symbol
         self.solution            = particular_solution   # alias
+        self.equation            = ode   # uniform per-order API
 
 
 class ODESystemVarHierarchy:
@@ -60,6 +61,44 @@ class ODESystemVarHierarchy:
 # ---------------------------------------------------------------------------
 # Top-level hierarchy container
 # ---------------------------------------------------------------------------
+
+class _SystemOrderView:
+    """Order-k view across every variable of a coupled system.
+
+    Returned by ``sol[k]`` on an :class:`ODESystemHierarchy`, giving the same
+    ``.equation`` / ``.solution`` interface as a scalar order entry, except that
+    each member is a dict keyed by variable name::
+
+        sol[k].equation             # {'u': Eq(...), 'v': Eq(...)}
+        sol[k].solution             # {'u': expr,    'v': expr}
+        sol[k].particular_solution  # likewise
+
+    (Per-variable access ``sol["u"][k]`` remains available.)
+    """
+
+    def __init__(self, hierarchy, order):
+        self.order = order
+        self._h    = hierarchy
+
+    def _collect(self, attr):
+        return {v: getattr(self._h.hierarchies[v][self.order], attr)
+                for v in self._h.variables}
+
+    @property
+    def equation(self):            return self._collect('equation')
+    @property
+    def ode(self):                 return self._collect('ode')
+    @property
+    def solution(self):            return self._collect('solution')
+    @property
+    def general_solution(self):    return self._collect('general_solution')
+    @property
+    def particular_solution(self): return self._collect('particular_solution')
+
+    def __repr__(self):
+        return (f"<order-{self.order} view over variables "
+                f"{list(self._h.variables)}>")
+
 
 class ODESystemHierarchy:
     """
@@ -86,13 +125,22 @@ class ODESystemHierarchy:
         self.independent = None
         self._method     = "Regular perturbation — ODE system"
 
-    def __getitem__(self, var: str) -> ODESystemVarHierarchy:
-        if var not in self.hierarchies:
-            raise KeyError(
-                f"\n\n  Variable '{var}' not in system.\n"
-                f"  Available: {self.variables}\n"
-            )
-        return self.hierarchies[var]
+    def __len__(self):
+        """Number of orders (identical for every variable)."""
+        first = next(iter(self.hierarchies.values()), None)
+        return len(first) if first is not None else 0
+
+    def __getitem__(self, key):
+        # String key -> per-variable hierarchy:  sol["u"][k]
+        # Integer key -> order-k view across all variables:  sol[k].solution -> {var: expr}
+        if isinstance(key, str):
+            if key not in self.hierarchies:
+                raise KeyError(
+                    f"\n\n  Variable '{key}' not in system.\n"
+                    f"  Available: {self.variables}\n"
+                )
+            return self.hierarchies[key]
+        return _SystemOrderView(self, int(key))
 
 
     def to_latex(self, environment='align', show_orders=False, filename=None):
@@ -277,6 +325,35 @@ def expand_regular_ode_system(problem, order: int = 2) -> ODESystemHierarchy:
             for func, sol_expr in known.items():
                 ode_expr = ode_expr.subs(func, sol_expr)
             ode_expr = expand(ode_expr)
+
+            # ------------------------------------------------------------------
+            # Decoupling guard.  After substituting every known solution, the
+            # equation for u_k must involve only u_k.  If it still references
+            # another variable's unknown function, the variables are coupled at
+            # this order (typically O(1) leading-order coupling), which violates
+            # the decoupling assumption of this solver.  Fail loudly instead of
+            # letting dsolve return an unresolved / incorrect result.
+            # ------------------------------------------------------------------
+            from sympy.core.function import AppliedUndef
+            all_unknowns = {u_funcs[d][j] for d in deps for j in range(N + 1)}
+            foreign = (ode_expr.atoms(AppliedUndef) & all_unknowns) - {uk}
+            if foreign:
+                foreign_names = ', '.join(sorted(str(f) for f in foreign))
+                raise RuntimeError(
+                    f"\n\n  The order-{k} equation for '{dep}' remains coupled to "
+                    f"other variables ({foreign_names})\n"
+                    f"  after substituting all known lower-order solutions:\n"
+                    f"      {Eq(ode_expr, 0)}\n\n"
+                    f"  expand_regular() for systems assumes the equations decouple "
+                    f"into scalar ODEs\n"
+                    f"  at each order, which holds only when the inter-variable "
+                    f"coupling enters at\n"
+                    f"  O({eps}) (i.e. the leading-order operator is diagonal).  This "
+                    f"system is coupled\n"
+                    f"  at order {k}; such strongly coupled systems are not supported "
+                    f"by the automated\n"
+                    f"  workflow.\n"
+                )
 
             # Rewrite to exp form so dsolve can use variation of parameters /
             # undetermined coefficients cleanly.  Do NOT rewrite back to cos/sin

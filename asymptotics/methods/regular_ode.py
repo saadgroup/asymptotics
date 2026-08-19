@@ -193,6 +193,7 @@ class ODEOrderEntry:
         self.secular             = secular              # True if secular terms detected
         # solution is an alias for particular_solution for display compatibility
         self.solution            = particular_solution
+        self.equation            = ode   # uniform per-order API: order-k equation
 
 
 

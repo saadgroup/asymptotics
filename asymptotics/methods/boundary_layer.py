@@ -82,6 +82,35 @@ class BoundaryLayerHierarchy:
         self.q_expr         = None
         self.f_expr         = None
 
+    @property
+    def components(self):
+        """Every intermediate substep as a dict of live SymPy objects.
+
+        Rather than treating ``expand_boundary_layer()`` as a single opaque
+        call, each stage can be inspected, plotted, or reused independently::
+
+            parts = sol.components
+            parts['outer']        # leading-order outer solution  u_out(x)
+            parts['inner']        # inner solution in the stretched coord.  U(xi)
+            parts['inner_xi']     # inner solution back in x        U((x-a)/eps)
+            parts['match']        # matching constant
+            parts['composite']    # uniform composite expansion
+            parts['outer_ode']    # the reduced (outer) ODE that was solved
+            parts['inner_ode']    # the leading-order inner ODE
+
+        Each solution is a SymPy expression, ready for ``lambdify``/plotting or
+        further symbolic manipulation.
+        """
+        return {
+            'layer_location': self.layer_location,
+            'outer_ode'     : self.outer_ode,
+            'outer'         : self.outer,
+            'inner_ode'     : self.inner_ode,
+            'inner'         : self.inner,
+            'inner_xi'      : self.inner_xi,
+            'match'         : self.match,
+            'composite'     : self.expansion,
+        }
 
     def compare_numeric(self, eps, params=None, **kwargs):
         """
