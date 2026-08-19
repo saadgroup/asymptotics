@@ -64,6 +64,7 @@ from sympy import (
     exp as _exp, cos as _cos
 )
 from asymptotics.methods.regular_ode import _bc_value_at_order
+from asymptotics.core.exceptions import NotReadyError
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +327,12 @@ class StepwiseOrderEntry:
         example, forgetting an eigenvalue or forcing term). Pass
         ``check=False`` to bypass the verification (e.g. when the residual
         vanishes only after a later solvability condition is imposed).
+
+        The check verifies the *differential equation* only. It does **not**
+        verify that the supplied expression satisfies the problem's
+        initial/boundary conditions — the expression is trusted to be the
+        particular solution with its constants already fixed by those
+        conditions, and enforcing them remains the caller's responsibility.
 
         Parameters
         ----------
@@ -633,7 +640,7 @@ class StepwiseHierarchy:
 
     becomes available on :attr:`expansion`, and the shared hierarchy API
     (:meth:`show`, :meth:`to_latex`, :meth:`eval`, :meth:`compare_numeric`)
-    turns on. Those four methods raise :class:`RuntimeError` if called while any
+    turns on. Those four methods raise :class:`~asymptotics.NotReadyError` if called while any
     order is still pending.
 
     Attributes
@@ -760,19 +767,7 @@ class StepwiseHierarchy:
         if self.n_pending > 0:
             pending = [e.order for e in self.entries if not e.is_solved]
             solved  = [e.order for e in self.entries if e.is_solved]
-            lines   = []
-            for k in pending:
-                lines.append(
-                    f"    sol[{k}].solve()   or   sol[{k}].set_solution(expr)"
-                )
-            raise RuntimeError(
-                f"\n\n  Cannot call '{method_name}' — not all orders are solved.\n"
-                f"  Solved:  {solved}\n"
-                f"  Pending: {pending}\n\n"
-                f"  Solve remaining orders:\n" +
-                "\n".join(lines) +
-                f"\n  Or: sol.solve_all()\n"
-            )
+            raise NotReadyError(method_name, solved, pending)
 
     def _finalize(self):
         """Assemble expansion once all orders are solved."""
@@ -903,7 +898,7 @@ class StepwiseHierarchy:
 
         Raises
         ------
-        RuntimeError
+        NotReadyError
             If any order is still pending.
         """
         self._check_all_solved('to_latex')
@@ -934,7 +929,7 @@ class StepwiseHierarchy:
 
         Raises
         ------
-        RuntimeError
+        NotReadyError
             If any order is still pending.
 
         Examples
@@ -979,7 +974,7 @@ class StepwiseHierarchy:
 
         Raises
         ------
-        RuntimeError
+        NotReadyError
             If any order is still pending.
         """
         self._check_all_solved('compare_numeric')

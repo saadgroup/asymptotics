@@ -128,6 +128,7 @@ from asymptotics.core.exceptions import (
     NoLeadingOrderSolutionError,
     NoHigherOrderSolutionError,
     OnlyComplexRootsError,
+    NotReadyError,
 )
 from asymptotics.core.conditions import ConditionError
 
@@ -157,7 +158,7 @@ from asymptotics.methods.regular_algebraic import expand_regular_algebraic as ex
 # ---------------------------------------------------------------------------
 # Version
 # ---------------------------------------------------------------------------
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 __all__ = [
     # Problem classes
@@ -182,6 +183,7 @@ __all__ = [
     "NoLeadingOrderSolutionError",
     "NoHigherOrderSolutionError",
     "OnlyComplexRootsError",
+    "NotReadyError",
     "ConditionError",
     # Standalone functions
     "compare_numeric",

@@ -155,3 +155,49 @@ class OnlyComplexRootsError(PerturbationError):
             f"  If you want to follow a complex branch, provide a root_hint:\n"
             f"    AlgebraicEquation(..., root_hint=-0.5 + 0.866j)\n"
         )
+
+
+class NotReadyError(PerturbationError, RuntimeError):
+    r"""
+    A result method was called on a step-by-step hierarchy before every order
+    was solved.
+
+    Raised by the four-method result interface of a
+    :class:`~asymptotics.StepwiseHierarchy` — :meth:`~StepwiseHierarchy.show`,
+    :meth:`~StepwiseHierarchy.eval`, :meth:`~StepwiseHierarchy.compare_numeric`,
+    :meth:`~StepwiseHierarchy.to_latex` — while one or more orders are still
+    unsolved.  The message lists the solved and pending orders and how to
+    finish them (:meth:`~StepwiseOrderEntry.solve`,
+    :meth:`~StepwiseOrderEntry.set_solution`, or
+    :meth:`~StepwiseHierarchy.solve_all`).
+
+    It subclasses both :class:`PerturbationError` and :class:`RuntimeError`, so
+    it is caught by ``except PerturbationError`` (the toolkit-wide handler) and
+    by ``except RuntimeError`` (backward compatible with earlier releases that
+    raised a bare :class:`RuntimeError`).
+
+    Parameters
+    ----------
+    method_name : str
+        The result method that was called too early (e.g. ``"to_latex"``).
+        Stored on the exception as ``.method_name``.
+    solved : list of int
+        Orders already solved.  Stored as ``.solved``.
+    pending : list of int
+        Orders still unsolved.  Stored as ``.pending``.
+    """
+    def __init__(self, method_name, solved, pending):
+        self.method_name = method_name
+        self.solved      = list(solved)
+        self.pending     = list(pending)
+        steps = "\n".join(
+            f"    sol[{k}].solve()   or   sol[{k}].set_solution(expr)"
+            for k in self.pending
+        )
+        super().__init__(
+            f"\n\n  Cannot call '{method_name}' — not all orders are solved.\n"
+            f"  Solved:  {self.solved}\n"
+            f"  Pending: {self.pending}\n\n"
+            f"  Solve remaining orders:\n{steps}\n"
+            f"  Or: sol.solve_all()\n"
+        )
