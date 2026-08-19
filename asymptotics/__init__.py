@@ -157,7 +157,7 @@ from asymptotics.methods.regular_algebraic import expand_regular_algebraic as ex
 # ---------------------------------------------------------------------------
 # Version
 # ---------------------------------------------------------------------------
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     # Problem classes
