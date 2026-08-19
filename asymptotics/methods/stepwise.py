@@ -265,7 +265,48 @@ class StepwiseOrderEntry:
             h._finalize()
         return True
 
-    def set_solution(self, expr):
+    def residual(self, expr):
+        r"""
+        Residual of the order-:math:`k` equation for a candidate solution.
+
+        Substitutes ``expr`` for :math:`u_k(t)` into the order-:math:`k`
+        equation (with all solved lower orders already inserted), evaluates any
+        resulting derivatives, and simplifies. A candidate that solves the
+        order returns :math:`0`.
+
+        Parameters
+        ----------
+        expr : sympy.Expr or str
+            Candidate solution :math:`u_k(t)`.
+
+        Returns
+        -------
+        sympy.Expr
+            The simplified residual :math:`\mathcal{L}_k[u_k] - r_k`. Zero iff
+            ``expr`` satisfies the order-:math:`k` equation.
+
+        Notes
+        -----
+        The check uses the *substituted* equation when every lower order is
+        solved, and the raw leading-order equation otherwise. It is a symbolic
+        identity check: if the residual cannot be simplified to a literal zero
+        (e.g. it depends on an as-yet-undetermined constant), it is returned
+        unchanged rather than forced to zero.
+        """
+        from sympy import simplify, trigsimp
+        if isinstance(expr, str):
+            expr = sympify(expr)
+        h  = self._hierarchy
+        k  = self.order
+        uk = self.symbol
+        if k > 0 and all(h.entries[j].is_solved for j in range(k)):
+            eq = self._build_substituted_ode(h)
+        else:
+            eq = Eq(expand(self._ode_coeffs), 0)
+        res = (eq.lhs - eq.rhs).subs(uk, expr).doit()
+        return trigsimp(simplify(expand(res)))
+
+    def set_solution(self, expr, check=True):
         r"""
         Supply the solution :math:`u_k(t)` for this order by hand.
 
@@ -275,22 +316,42 @@ class StepwiseOrderEntry:
         constants already fixed by the conditions — it is stored as both the
         general and particular solution, secular terms are detected, and the
         order is marked solved (finalizing the expansion if it was the last
-        pending order). No consistency check against the order equation is
-        performed; correctness is the caller's responsibility.
+        pending order).
+
+        By default the supplied expression is **verified** against the
+        order-:math:`k` equation: it is substituted in and the residual is
+        simplified, and a :class:`ValueError` is raised if the residual is a
+        provably non-zero expression. This catches a common mistake — supplying
+        a function that does not actually solve the stated equation (for
+        example, forgetting an eigenvalue or forcing term). Pass
+        ``check=False`` to bypass the verification (e.g. when the residual
+        vanishes only after a later solvability condition is imposed).
 
         Parameters
         ----------
         expr : sympy.Expr or str
             The solution :math:`u_k(t)`. Strings are parsed with
             :func:`sympy.sympify`.
+        check : bool, optional
+            If ``True`` (default), verify that ``expr`` satisfies the
+            order-:math:`k` equation and raise :class:`ValueError` on a
+            non-zero residual. Set ``False`` to skip the check.
 
         Returns
         -------
         None
 
+        Raises
+        ------
+        ValueError
+            If ``check`` is ``True`` and ``expr`` does not satisfy the
+            order-:math:`k` equation (non-zero residual). The message reports
+            the residual so the discrepancy is visible.
+
         See Also
         --------
         solve : attempt an automatic SymPy solution instead.
+        residual : compute the residual without storing the solution.
 
         Examples
         --------
@@ -305,8 +366,20 @@ class StepwiseOrderEntry:
         if isinstance(expr, str):
             expr = sympify(expr)
 
-        # Validate: substitute into conditions to check
-        # (just a soft check — user is responsible)
+        # Verify the candidate against the order-k equation.
+        if check:
+            res = self.residual(expr)
+            if res != 0:
+                raise ValueError(
+                    f"\n\n  set_solution(): the supplied expression does not satisfy "
+                    f"the order-{self.order} equation.\n"
+                    f"  Residual (should be 0): {res}\n\n"
+                    f"  Common causes: a missing eigenvalue/forcing term, or a "
+                    f"solution that is only valid after a later solvability\n"
+                    f"  condition is imposed. If the residual is expected to vanish "
+                    f"only under such a condition, pass check=False.\n"
+                )
+
         self._store_solution(expr, expr, t)
         h._known_solutions[uk] = expr
         print(f"  ✓  Order {self.order} set manually: {dep_name(uk)} = {expr}")
